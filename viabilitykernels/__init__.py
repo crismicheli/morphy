@@ -16,20 +16,20 @@ simulation
     Initial condition sampling, trajectory integration, and ensemble runners.
 """
 
-from viability_kernels.odes import (
+from viabilitykernels.odes import (
     g_porosity,
     h_porosity,
     rhs,
     quasi_steady_C,
     quasi_steady_O,
 )
-from viability_kernels.viability import (
+from viabilitykernels.viability import (
     ViabilityReport,
     check_trajectory,
     classify_ensemble,
     viable_fraction,
 )
-from viability_kernels.simulation import (
+from viabilitykernels.simulation import (
     sample_initial_conditions,
     integrate_trajectory,
     run_ensemble,
