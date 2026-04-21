@@ -22,7 +22,10 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
-from scipy.integrate import OdeResult
+# from scipy.integrate import OdeResult
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from scipy.integrate._ivp.ivp import OdeResult
 
 from viabilitykernels.odes import quasi_steady_C, quasi_steady_O
 from viabilitykernels.viability import ViabilityReport
