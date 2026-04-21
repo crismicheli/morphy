@@ -13,8 +13,13 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.integrate import OdeResult, solve_ivp
+# from scipy.integrate import OdeResult, solve_ivp
 
+from scipy.integrate import solve_ivp
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from scipy.integrate._ivp.ivp import OdeResult
+    
 from viabilitykernels.odes import rhs
 from viabilitykernels.viability import ViabilityReport, classify_ensemble
 
