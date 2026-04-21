@@ -15,8 +15,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.integrate import OdeResult, solve_ivp
 
-from viability_kernels.odes import rhs
-from viability_kernels.viability import ViabilityReport, classify_ensemble
+from viabilitykernels.odes import rhs
+from viabilitykernels.viability import ViabilityReport, classify_ensemble
 
 
 # ---------------------------------------------------------------------------
