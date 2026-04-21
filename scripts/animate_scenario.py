@@ -39,8 +39,8 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.patches import Rectangle
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viability_kernels.simulation import run_scenario
-from viability_kernels.phase_plane import ET_field, make_grid
+from viabilitykernels.simulation import run_scenario
+from viabilitykernels.phase_plane import ET_field, make_grid
 
 
 def parse_args() -> argparse.Namespace:
