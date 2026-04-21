@@ -74,6 +74,10 @@ git clone https://github.com/crismicheli/morphy.git
 cd morphy
 python -m venv .venv
 source .venv/bin/activate
+OR
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+IF IN ANACONDA POWER SHELL
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
