@@ -28,8 +28,9 @@ from typing import Dict, List, Optional
 
 import numpy as np
 # from scipy.integrate import OdeResult
-from typing import Any
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from scipy.integrate._ivp.ivp import OdeResult
 
 # ---------------------------------------------------------------------------
 # Data class for a trajectory's viability report
@@ -70,12 +71,12 @@ class ViabilityReport:
 # Core check function
 # ---------------------------------------------------------------------------
 
-def check_trajectory(sol: Any, bounds: Dict[str, float]) -> ViabilityReport:
+def check_trajectory(sol: OdeResult, bounds: Dict[str, float]) -> ViabilityReport:
     """Evaluate whether a simulated trajectory remains inside the viability kernel.
 
     Parameters
     ----------
-    sol : Any
+    sol : OdeResult
         Output of ``scipy.integrate.solve_ivp``.  Must have ``sol.y`` of
         shape ``(4, n_timepoints)`` with rows ``[C, T, E, O]``.
     bounds : dict
@@ -148,14 +149,14 @@ def check_trajectory(sol: Any, bounds: Dict[str, float]) -> ViabilityReport:
 # ---------------------------------------------------------------------------
 
 def classify_ensemble(
-    solutions: List[Any],
+    solutions: List[OdeResult],
     bounds: Dict[str, float],
 ) -> List[ViabilityReport]:
     """Apply :func:`check_trajectory` to every solution in a list.
 
     Parameters
     ----------
-    solutions : list of Any
+    solutions : list of OdeResult
         All trajectories from a simulation ensemble.
     bounds : dict
         Viability thresholds (same format as :func:`check_trajectory`).
