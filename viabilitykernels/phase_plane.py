@@ -24,8 +24,8 @@ import matplotlib.patches as mpatches
 import numpy as np
 from scipy.integrate import OdeResult
 
-from viability_kernels.odes import quasi_steady_C, quasi_steady_O
-from viability_kernels.viability import ViabilityReport
+from viabilitykernels.odes import quasi_steady_C, quasi_steady_O
+from viabilitykernels.viability import ViabilityReport
 
 
 # ---------------------------------------------------------------------------
