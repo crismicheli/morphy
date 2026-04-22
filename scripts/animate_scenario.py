@@ -73,6 +73,18 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SIM["n_traj"],
         help="Number of trajectories to simulate (default from DEFAULT_SIM).",
     )
+    parser.add_argument(
+        "--shift-T",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to the initial T center (default: 1.0).",
+    )
+    parser.add_argument(
+        "--shift-E",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to the initial E center (default: 1.0).",
+    )
     return parser.parse_args()
 
 
@@ -88,7 +100,25 @@ def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
 
-    x0_center = np.array(DEFAULT_SIM["x0_center"])
+    # x0_center = np.array(DEFAULT_SIM["x0_center"])
+    x0_center = np.array(DEFAULT_SIM["x0_center"], dtype=float)
+
+    # Push fragile scenarios closer to the viability boundary so the
+    # ensemble probes more informative regions of state space.
+    # State convention used below:
+    #   y[1] -> T (cytoskeletal tension)
+    #   y[2] -> E (ECM density)
+    if scenario["expected"] == "borderline":
+        x0_center[1] *= 1.15
+        x0_center[2] *= 1.20
+    elif scenario["expected"] == "unstable":
+        x0_center[1] *= 1.25
+        x0_center[2] *= 1.25
+
+    # Optional user-controlled overrides from the CLI
+    x0_center[1] *= args.shift_T
+    x0_center[2] *= args.shift_E
+    
     result = run_scenario(
         scenario_cfg=scenario,
         par=DEFAULT_PARAMS,
