@@ -31,6 +31,7 @@ Biophysical extremes:
     6. Over-tensioned (high beta)                               → unstable
     7. Optimal + aggressive ECM remodelling (high delta_E)      → borderline
     8. Near-optimal with enhanced curvature (high a)            → stable
+    9. Near-critical asymmetric regime                          → borderline
 """
 
 SCENARIOS: list = [
@@ -169,4 +170,33 @@ SCENARIOS: list = [
         "expected": "stable",
         "param_overrides": {"a": 6.0},
     },
+    # ------------------------------------------------------------------
+    # 9. NEAR-CRITICAL ASYMMETRIC REGIME — borderline
+    # ------------------------------------------------------------------
+    {
+        "label": "Near-critical asymmetric regime (β=2.6, η=0.7, δ_E=0.9, a=6.2, ρ=0.85, s=0.9) — borderline",
+        "p": 0.33,
+        "description": (
+            "This compound scenario moves the system away from the compact "
+            "stable attractor and toward a near-critical regime. Slightly "
+            "sub-optimal porosity (p=0.33) keeps curvature guidance high but "
+            "not perfectly balanced. Increasing both the guidance amplitude a "
+            "and the curvature-to-tension coupling β amplifies mechanical "
+            "responses, while reducing ECM damping η prevents rapid collapse "
+            "to a single attractor. At the same time, moderately faster ECM "
+            "remodelling and a mild reduction in oxygen support keep the system "
+            "close to the viability boundary. The resulting trajectories are "
+            "expected to show longer transients, stronger curvature, and more "
+            "heterogeneous paths across initial conditions."
+        ),
+        "expected": "borderline",
+        "param_overrides": {
+            "beta": 2.6,
+            "eta": 0.7,
+            "delta_E": 0.9,
+            "a": 6.2,
+            "rho": 0.85,
+            "s": 0.9,
+        },
+},
 ]
