@@ -115,7 +115,10 @@ def main() -> None:
     T_max_axis = 1.6
 
     EE, TT = make_grid((0, E_max_axis), (0, T_max_axis), n_points=20)
-    dE, dT = ET_field(EE, TT, p, DEFAULT_PARAMS)
+    # dE, dT = ET_field(EE, TT, p, DEFAULT_PARAMS)
+    scenario_params = dict(DEFAULT_PARAMS)
+    scenario_params.update(scenario.get("param_overrides", {}))
+    dE, dT = ET_field(EE, TT, p, scenario_params)
     speed = np.sqrt(dE**2 + dT**2) + 1e-9
     ax.quiver(
         EE,
