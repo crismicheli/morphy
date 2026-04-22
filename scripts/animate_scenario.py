@@ -108,12 +108,15 @@ def main() -> None:
     # State convention used below:
     #   y[1] -> T (cytoskeletal tension)
     #   y[2] -> E (ECM density)
+    noise_scale = (0.03, 0.03, 0.03, 0.05)
     if scenario["expected"] == "borderline":
-        x0_center[1] *= 1.15
-        x0_center[2] *= 1.20
+        x0_center[1] *= 1.5
+        x0_center[2] *= 1.7
+        noise_scale = (0.04, 0.08, 0.08, 0.06)
     elif scenario["expected"] == "unstable":
-        x0_center[1] *= 1.25
-        x0_center[2] *= 1.25
+        x0_center[1] *= 1.7
+        x0_center[2] *= 1.9
+        noise_scale = (0.05, 0.10, 0.10, 0.07)
 
     # Optional user-controlled overrides from the CLI
     x0_center[1] *= args.shift_T
@@ -128,6 +131,7 @@ def main() -> None:
         t_span=tuple(DEFAULT_SIM["t_span"]),
         n_eval=DEFAULT_SIM["n_eval"],
         rng_seed=DEFAULT_SIM["rng_seed"],
+        noise_scale=noise_scale,
     )
 
     solutions = result["solutions"]
