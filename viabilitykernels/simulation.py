@@ -189,6 +189,7 @@ def run_scenario(
     t_span: Tuple[float, float] = (0.0, 30.0),
     n_eval: int = 800,
     rng_seed: int = 42,
+    noise_scale: Tuple[float, float, float, float] = (0.03, 0.03, 0.03, 0.05),
 ) -> dict:
     """Run a named scenario defined by a configuration dictionary.
 
@@ -225,7 +226,13 @@ def run_scenario(
     # Apply any parameter overrides defined in the scenario config
     effective_par = {**par, **scenario_cfg.get("param_overrides", {})}
 
-    ics = sample_initial_conditions(x0_center, n_traj, rng_seed=rng_seed)
+    # ics = sample_initial_conditions(x0_center, n_traj, rng_seed=rng_seed)
+    ics = sample_initial_conditions(
+        x0_center,
+        n_traj,
+        noise_scale=noise_scale,
+        rng_seed=rng_seed,
+    )
     solutions, reports = run_ensemble(
         ics,
         p=scenario_cfg["p"],
