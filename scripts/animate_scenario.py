@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
     parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to the initial T center.")
     parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to the initial E center.")
-    parser.add_argument("--show-box", action="store_true", help="Show the 2D viability box overlay.")
+    parser.add_argument("--hide-box", action="store_true", help="Hide the 2D viability box overlay.")
     parser.add_argument("--focus-index", type=int, default=0, help="Trajectory index used for exit diagnosis readout.")
     return parser.parse_args()
 
@@ -164,18 +164,37 @@ def main() -> None:
         alpha=0.25, color="grey",
     )
 
-    if args.show_box:
+    if not args.hide_box:
         viability_rect = Rectangle(
             (DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["T_min"]),
             DEFAULT_BOUNDS["E_max"] - DEFAULT_BOUNDS["E_min"],
             DEFAULT_BOUNDS["T_max"] - DEFAULT_BOUNDS["T_min"],
             facecolor=BOX_GREEN,
-            alpha=0.12,
+            alpha=0.08,
             edgecolor=BOX_GREEN,
-            linewidth=2.2,
-            zorder=0,
+            linewidth=3.0,
+            linestyle="-",
+            zorder=2,
         )
         ax.add_patch(viability_rect)
+        ax.vlines(
+            [DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]],
+            ymin=DEFAULT_BOUNDS["T_min"],
+            ymax=DEFAULT_BOUNDS["T_max"],
+            colors=BOX_GREEN,
+            linewidth=2.6,
+            alpha=0.95,
+            zorder=3,
+        )
+        ax.hlines(
+            [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]],
+            xmin=DEFAULT_BOUNDS["E_min"],
+            xmax=DEFAULT_BOUNDS["E_max"],
+            colors=BOX_GREEN,
+            linewidth=2.6,
+            alpha=0.95,
+            zorder=3,
+        )
 
     lines = [ax.plot([], [], lw=1.7, alpha=0.90, color=BLUE)[0] for _ in solutions]
     points = [ax.plot([], [], "o", ms=4.2, color=BLUE, zorder=5)[0] for _ in solutions]
