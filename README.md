@@ -125,12 +125,6 @@ from viabilitykernels.simulation import runscenario
 from viabilitykernels.viability import classifyensemble
 ```
 
-## Development notes
-
-A few naming details should be kept consistent during the repo cleanup. The package init files should be named `__init__.py`, and imports should match the final module filenames exactly, for example `default_params.py` rather than `defaultparams.py`, and `phase_plane.py` rather than `phaseplane.py`.
-
-As a next cleanup step, you may want to standardize public function names to snake_case, such as `run_scenario` and `plot_all_scenarios`, to align with standard Python style conventions.
-
 ## Roadmap
 
 Potential next steps for the repository include adding automated tests, defining package metadata and dependencies in `pyproject.toml`, documenting the mathematical model more fully in `docs/`, and identifying a layer of simple inference that connects mutlicellular phenotypical states with kernels trajectories in time.
