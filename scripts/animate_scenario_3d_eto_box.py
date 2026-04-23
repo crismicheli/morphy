@@ -1,13 +1,4 @@
-
 #!/usr/bin/env python3
-"""
-Single-panel 3D ETO animation with optional translucent viability box.
-Fixes:
-- automatic output naming based on scenario label when --output is not provided
-- visibly rendered box when --show-box is enabled
-- clean single-panel layout with only time and C readout
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -26,10 +17,12 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario
+from viabilitykernels.viability import check_trajectory
 
 BLUE = "#2166ac"
 RED = "#d73027"
-BOX_GREEN = "#4dac26"
+BOX_FACE = (0.301, 0.675, 0.149, 0.16)
+BOX_EDGE = (0.301, 0.675, 0.149, 0.70)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,8 +37,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
     parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
-    parser.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
+    parser.add_argument("--show-box", action="store_true", help="Show translucent ETO admissible box.")
     parser.add_argument("--c-stat", choices=["mean", "median", "min", "max"], default="mean", help="How to aggregate C across trajectories for the numeric readout.")
+    parser.add_argument("--focus-index", type=int, default=0, help="Trajectory index used for exit diagnosis readout.")
     return parser.parse_args()
 
 
@@ -102,6 +96,43 @@ def aggregate(values: np.ndarray, mode: str) -> float:
     raise ValueError(mode)
 
 
+def first_exit_index(sol, bounds: dict) -> int | None:
+    C, T, E, O = sol.y
+    inside = (
+        (C >= bounds["C_min"]) &
+        (T >= bounds["T_min"]) & (T <= bounds["T_max"]) &
+        (E >= bounds["E_min"]) & (E <= bounds["E_max"]) &
+        (O >= bounds["O_min"])
+    )
+    bad = np.where(~inside)[0]
+    return None if len(bad) == 0 else int(bad[0])
+
+
+def add_box(ax, bounds: dict, z_top: float) -> None:
+    faces = viability_faces(
+        bounds["E_min"], bounds["E_max"],
+        bounds["T_min"], bounds["T_max"],
+        bounds["O_min"], z_top,
+    )
+    box = Poly3DCollection(faces, facecolors=BOX_FACE, edgecolors=BOX_EDGE, linewidths=1.1)
+    box.set_zsort("min")
+    ax.add_collection3d(box)
+
+    e0, e1 = bounds["E_min"], bounds["E_max"]
+    t0, t1 = bounds["T_min"], bounds["T_max"]
+    o0, o1 = bounds["O_min"], z_top
+    edges = [
+        ([e0, e1], [t0, t0], [o0, o0]), ([e0, e1], [t1, t1], [o0, o0]),
+        ([e0, e0], [t0, t1], [o0, o0]), ([e1, e1], [t0, t1], [o0, o0]),
+        ([e0, e0], [t0, t0], [o0, o1]), ([e1, e1], [t0, t0], [o0, o1]),
+        ([e0, e0], [t1, t1], [o0, o1]), ([e1, e1], [t1, t1], [o0, o1]),
+        ([e0, e1], [t0, t0], [o1, o1]), ([e0, e1], [t1, t1], [o1, o1]),
+        ([e0, e0], [t0, t1], [o1, o1]), ([e1, e1], [t0, t1], [o1, o1]),
+    ]
+    for ex, ty, oz in edges:
+        ax.plot(ex, ty, oz, color=BOX_EDGE[:3], alpha=0.85, lw=1.1)
+
+
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
@@ -137,11 +168,19 @@ def main() -> None:
     reports = result["reports"]
     label = result["label"]
 
+    diagnostics = []
+    for sol in solutions:
+        rep = check_trajectory(sol, DEFAULT_BOUNDS)
+        diagnostics.append({
+            "report": rep,
+            "exit_idx": first_exit_index(sol, DEFAULT_BOUNDS),
+        })
+
     n_time = min(len(solutions[0].t), args.max_frames)
     output_path = Path(args.output) if args.output else default_output_path(label, args.show_box)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(8.4, 6.6), constrained_layout=True)
+    fig = plt.figure(figsize=(8.6, 6.8), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
 
     E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.10)
@@ -158,43 +197,12 @@ def main() -> None:
     ax.grid(True, alpha=0.20)
 
     if args.show_box:
-        faces = viability_faces(
-            DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"],
-            DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
-            DEFAULT_BOUNDS["O_min"], O_max_axis,
-        )
-        box = Poly3DCollection(
-            faces,
-            facecolors=(0.301, 0.675, 0.149, 0.16),
-            edgecolors=(0.301, 0.675, 0.149, 0.65),
-            linewidths=1.1,
-        )
-        box.set_zsort('min')
-        ax.add_collection3d(box)
-        # reinforce visibility with explicit boundary edges
-        edge_sets = [
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"]], [DEFAULT_BOUNDS["O_min"], DEFAULT_BOUNDS["O_min"]]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"]], [DEFAULT_BOUNDS["O_min"], DEFAULT_BOUNDS["O_min"]]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]], [DEFAULT_BOUNDS["O_min"], DEFAULT_BOUNDS["O_min"]]),
-            ([DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]], [DEFAULT_BOUNDS["O_min"], DEFAULT_BOUNDS["O_min"]]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"]], [DEFAULT_BOUNDS["O_min"], O_max_axis]),
-            ([DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"]], [DEFAULT_BOUNDS["O_min"], O_max_axis]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]], [DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"]], [DEFAULT_BOUNDS["O_min"], O_max_axis]),
-            ([DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"]], [DEFAULT_BOUNDS["O_min"], O_max_axis]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"]], [O_max_axis, O_max_axis]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"]], [O_max_axis, O_max_axis]),
-            ([DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]], [O_max_axis, O_max_axis]),
-            ([DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"]], [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]], [O_max_axis, O_max_axis]),
-        ]
-        for ex, ty, oz in edge_sets:
-            ax.plot(ex, ty, oz, color=BOX_GREEN, alpha=0.75, lw=1.0)
+        add_box(ax, DEFAULT_BOUNDS, O_max_axis)
 
-    colors = [BLUE if r.viable else RED for r in reports]
-    lines = [ax.plot([], [], [], lw=1.7, alpha=0.90, color=c)[0] for c in colors]
-    points = [ax.plot([], [], [], "o", ms=4.2, color=c, zorder=6)[0] for c in colors]
+    lines = [ax.plot([], [], [], lw=1.8, alpha=0.95, color=BLUE)[0] for _ in solutions]
+    points = [ax.plot([], [], [], "o", ms=4.4, color=BLUE, zorder=6)[0] for _ in solutions]
 
     fig.suptitle(f"{label}\nAnimated ensemble in the 3D (E, T, O) phenotype space", fontsize=13, fontweight="bold")
-
     frame_text = ax.text2D(
         0.02, 0.92, "t = 0.00",
         transform=ax.transAxes, va="top", ha="left", fontsize=9,
@@ -205,22 +213,32 @@ def main() -> None:
         transform=ax.transAxes, va="bottom", ha="right", fontsize=10,
         bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.8", alpha=0.94),
     )
+    focus_idx = max(0, min(args.focus_index, len(solutions) - 1))
+    exit_text = ax.text2D(
+        0.98, 0.14, "",
+        transform=ax.transAxes, va="bottom", ha="right", fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.94),
+    )
 
     def init():
         for line, point in zip(lines, points):
             line.set_data([], [])
             line.set_3d_properties([])
+            line.set_color(BLUE)
             point.set_data([], [])
             point.set_3d_properties([])
+            point.set_color(BLUE)
         frame_text.set_text("t = 0.00")
         c_text.set_text(f"C ({args.c_stat}) = 0.000")
-        return [*lines, *points, frame_text, c_text]
+        exit_text.set_text("")
+        return [*lines, *points, frame_text, c_text, exit_text]
 
     def update(frame: int):
         t_now = solutions[0].t[frame]
         c_now = np.array([sol.y[0][frame] for sol in solutions], dtype=float)
         c_val = aggregate(c_now, args.c_stat)
-        for sol, line, point in zip(solutions, lines, points):
+
+        for sol, line, point, diag in zip(solutions, lines, points, diagnostics):
             E = sol.y[2][: frame + 1]
             T = sol.y[1][: frame + 1]
             O = sol.y[3][: frame + 1]
@@ -228,9 +246,24 @@ def main() -> None:
             line.set_3d_properties(O)
             point.set_data([E[-1]], [T[-1]])
             point.set_3d_properties([O[-1]])
+
+            exit_idx = diag["exit_idx"]
+            current_color = BLUE if exit_idx is None or frame < exit_idx else RED
+            line.set_color(current_color)
+            point.set_color(current_color)
+
+        rep = diagnostics[focus_idx]["report"]
+        exit_idx = diagnostics[focus_idx]["exit_idx"]
+        if rep.viable or exit_idx is None or frame < exit_idx:
+            exit_msg = f"traj {focus_idx}: viable so far"
+        else:
+            vars_txt = ",".join(rep.violated_vars) if rep.violated_vars else "?"
+            exit_msg = f"traj {focus_idx}: exit at t={rep.first_exit_time:.2f} via {vars_txt}"
+
         frame_text.set_text(f"t = {t_now:.2f}")
         c_text.set_text(f"C ({args.c_stat}) = {c_val:.3f}")
-        return [*lines, *points, frame_text, c_text]
+        exit_text.set_text(exit_msg)
+        return [*lines, *points, frame_text, c_text, exit_text]
 
     anim = FuncAnimation(
         fig,
@@ -245,6 +278,10 @@ def main() -> None:
 
     print(f"Scenario: {label}")
     print(f"Saved GIF: {output_path}")
+    for i, d in enumerate(diagnostics):
+        rep = d["report"]
+        status = "VIABLE" if rep.viable else f"EXIT t={rep.first_exit_time:.2f} via {','.join(rep.violated_vars)}"
+        print(f"traj {i:02d}: {status}")
 
 
 if __name__ == "__main__":
