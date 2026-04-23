@@ -169,31 +169,24 @@ def main() -> None:
             (DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["T_min"]),
             DEFAULT_BOUNDS["E_max"] - DEFAULT_BOUNDS["E_min"],
             DEFAULT_BOUNDS["T_max"] - DEFAULT_BOUNDS["T_min"],
-            facecolor=BOX_GREEN,
-            alpha=0.08,
-            edgecolor=BOX_GREEN,
-            linewidth=3.0,
+            facecolor="none",
+            edgecolor="#00aa44",
+            linewidth=4.0,
             linestyle="-",
-            zorder=2,
+            zorder=20,
+            clip_on=False,
         )
         ax.add_patch(viability_rect)
-        ax.vlines(
-            [DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"]],
-            ymin=DEFAULT_BOUNDS["T_min"],
-            ymax=DEFAULT_BOUNDS["T_max"],
-            colors=BOX_GREEN,
-            linewidth=2.6,
-            alpha=0.95,
-            zorder=3,
-        )
-        ax.hlines(
-            [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"]],
-            xmin=DEFAULT_BOUNDS["E_min"],
-            xmax=DEFAULT_BOUNDS["E_max"],
-            colors=BOX_GREEN,
-            linewidth=2.6,
-            alpha=0.95,
-            zorder=3,
+        ax.plot(
+            [DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]],
+            [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_min"]],
+            color="#00aa44",
+            linewidth=3.2,
+            alpha=1.0,
+            zorder=21,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            clip_on=False,
         )
 
     lines = [ax.plot([], [], lw=1.7, alpha=0.90, color=BLUE)[0] for _ in solutions]
