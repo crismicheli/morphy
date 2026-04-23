@@ -21,8 +21,7 @@ from viabilitykernels.viability import check_trajectory
 
 BLUE = "#2166ac"
 RED = "#d73027"
-BOX_FACE = (0.301, 0.675, 0.149, 0.16)
-BOX_EDGE = (0.301, 0.675, 0.149, 0.70)
+BOX_GREEN = "#4dac26"
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
     parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
-    parser.add_argument("--show-box", action="store_true", help="Show translucent ETO admissible box.")
+    parser.add_argument("--show-box", action="store_true", help="Show the admissible ETO box.")
     parser.add_argument("--c-stat", choices=["mean", "median", "min", "max"], default="mean", help="How to aggregate C across trajectories for the numeric readout.")
     parser.add_argument("--focus-index", type=int, default=0, help="Trajectory index used for exit diagnosis readout.")
     return parser.parse_args()
@@ -65,25 +64,6 @@ def default_output_path(label: str, show_box: bool) -> Path:
     return ROOT / "figures" / f"{slugify(label)}{suffix}"
 
 
-def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: float):
-    v000 = [e0, t0, o0]
-    v100 = [e1, t0, o0]
-    v110 = [e1, t1, o0]
-    v010 = [e0, t1, o0]
-    v001 = [e0, t0, o1]
-    v101 = [e1, t0, o1]
-    v111 = [e1, t1, o1]
-    v011 = [e0, t1, o1]
-    return [
-        [v000, v100, v110, v010],
-        [v001, v101, v111, v011],
-        [v000, v100, v101, v001],
-        [v010, v110, v111, v011],
-        [v000, v010, v011, v001],
-        [v100, v110, v111, v101],
-    ]
-
-
 def aggregate(values: np.ndarray, mode: str) -> float:
     if mode == "mean":
         return float(np.mean(values))
@@ -96,7 +76,7 @@ def aggregate(values: np.ndarray, mode: str) -> float:
     raise ValueError(mode)
 
 
-def first_exit_index(sol, bounds: dict) -> int | None:
+def first_exit_index(sol, bounds: dict):
     C, T, E, O = sol.y
     inside = (
         (C >= bounds["C_min"]) &
@@ -108,29 +88,37 @@ def first_exit_index(sol, bounds: dict) -> int | None:
     return None if len(bad) == 0 else int(bad[0])
 
 
-def add_box(ax, bounds: dict, z_top: float) -> None:
-    faces = viability_faces(
-        bounds["E_min"], bounds["E_max"],
-        bounds["T_min"], bounds["T_max"],
-        bounds["O_min"], z_top,
-    )
-    box = Poly3DCollection(faces, facecolors=BOX_FACE, edgecolors=BOX_EDGE, linewidths=1.1)
-    box.set_zsort("min")
-    ax.add_collection3d(box)
-
+def add_visible_box(ax, bounds: dict, z_top: float):
     e0, e1 = bounds["E_min"], bounds["E_max"]
     t0, t1 = bounds["T_min"], bounds["T_max"]
     o0, o1 = bounds["O_min"], z_top
+
+    faces = [
+        [[e0, t0, o0], [e1, t0, o0], [e1, t1, o0], [e0, t1, o0]],
+        [[e0, t0, o1], [e1, t0, o1], [e1, t1, o1], [e0, t1, o1]],
+        [[e0, t0, o0], [e1, t0, o0], [e1, t0, o1], [e0, t0, o1]],
+        [[e0, t1, o0], [e1, t1, o0], [e1, t1, o1], [e0, t1, o1]],
+        [[e0, t0, o0], [e0, t1, o0], [e0, t1, o1], [e0, t0, o1]],
+        [[e1, t0, o0], [e1, t1, o0], [e1, t1, o1], [e1, t0, o1]],
+    ]
+    poly = Poly3DCollection(
+        faces,
+        facecolors=(0.301, 0.675, 0.149, 0.22),
+        edgecolors=(0.301, 0.675, 0.149, 0.95),
+        linewidths=1.6,
+    )
+    ax.add_collection3d(poly)
+
     edges = [
         ([e0, e1], [t0, t0], [o0, o0]), ([e0, e1], [t1, t1], [o0, o0]),
         ([e0, e0], [t0, t1], [o0, o0]), ([e1, e1], [t0, t1], [o0, o0]),
-        ([e0, e0], [t0, t0], [o0, o1]), ([e1, e1], [t0, t0], [o0, o1]),
-        ([e0, e0], [t1, t1], [o0, o1]), ([e1, e1], [t1, t1], [o0, o1]),
         ([e0, e1], [t0, t0], [o1, o1]), ([e0, e1], [t1, t1], [o1, o1]),
         ([e0, e0], [t0, t1], [o1, o1]), ([e1, e1], [t0, t1], [o1, o1]),
+        ([e0, e0], [t0, t0], [o0, o1]), ([e1, e1], [t0, t0], [o0, o1]),
+        ([e0, e0], [t1, t1], [o0, o1]), ([e1, e1], [t1, t1], [o0, o1]),
     ]
-    for ex, ty, oz in edges:
-        ax.plot(ex, ty, oz, color=BOX_EDGE[:3], alpha=0.85, lw=1.1)
+    for xs, ys, zs in edges:
+        ax.plot(xs, ys, zs, color=BOX_GREEN, lw=1.8, alpha=0.95)
 
 
 def main() -> None:
@@ -165,27 +153,25 @@ def main() -> None:
     )
 
     solutions = result["solutions"]
-    reports = result["reports"]
     label = result["label"]
 
     diagnostics = []
     for sol in solutions:
         rep = check_trajectory(sol, DEFAULT_BOUNDS)
-        diagnostics.append({
-            "report": rep,
-            "exit_idx": first_exit_index(sol, DEFAULT_BOUNDS),
-        })
+        diagnostics.append({"report": rep, "exit_idx": first_exit_index(sol, DEFAULT_BOUNDS)})
+
+    viable_total = sum(d["report"].viable for d in diagnostics)
 
     n_time = min(len(solutions[0].t), args.max_frames)
     output_path = Path(args.output) if args.output else default_output_path(label, args.show_box)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(8.6, 6.8), constrained_layout=True)
+    fig = plt.figure(figsize=(8.8, 6.9), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
 
-    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.10)
-    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.10)
-    O_max_axis = max(1.4, DEFAULT_BOUNDS["O_min"] * 4.5)
+    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.12)
+    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.12)
+    O_max_axis = 1.1
 
     ax.set_xlim(0, E_max_axis)
     ax.set_ylim(0, T_max_axis)
@@ -197,27 +183,35 @@ def main() -> None:
     ax.grid(True, alpha=0.20)
 
     if args.show_box:
-        add_box(ax, DEFAULT_BOUNDS, O_max_axis)
+        add_visible_box(ax, DEFAULT_BOUNDS, O_max_axis)
 
     lines = [ax.plot([], [], [], lw=1.8, alpha=0.95, color=BLUE)[0] for _ in solutions]
     points = [ax.plot([], [], [], "o", ms=4.4, color=BLUE, zorder=6)[0] for _ in solutions]
 
     fig.suptitle(f"{label}\nAnimated ensemble in the 3D (E, T, O) phenotype space", fontsize=13, fontweight="bold")
+
+    viable_text = ax.text2D(
+        0.02, 0.98,
+        f"Viable trajectories: {viable_total}/{len(solutions)}",
+        transform=ax.transAxes, va="top", ha="left", fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.8", alpha=0.95),
+    )
     frame_text = ax.text2D(
-        0.02, 0.92, "t = 0.00",
+        0.02, 0.90, "t = 0.00",
         transform=ax.transAxes, va="top", ha="left", fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.85", alpha=0.88),
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.85", alpha=0.90),
     )
     c_text = ax.text2D(
         0.98, 0.06, f"C ({args.c_stat}) = 0.000",
         transform=ax.transAxes, va="bottom", ha="right", fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.8", alpha=0.94),
+        bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.8", alpha=0.95),
     )
+
     focus_idx = max(0, min(args.focus_index, len(solutions) - 1))
     exit_text = ax.text2D(
         0.98, 0.14, "",
         transform=ax.transAxes, va="bottom", ha="right", fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.94),
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.8", alpha=0.95),
     )
 
     def init():
@@ -231,7 +225,7 @@ def main() -> None:
         frame_text.set_text("t = 0.00")
         c_text.set_text(f"C ({args.c_stat}) = 0.000")
         exit_text.set_text("")
-        return [*lines, *points, frame_text, c_text, exit_text]
+        return [*lines, *points, viable_text, frame_text, c_text, exit_text]
 
     def update(frame: int):
         t_now = solutions[0].t[frame]
@@ -263,7 +257,7 @@ def main() -> None:
         frame_text.set_text(f"t = {t_now:.2f}")
         c_text.set_text(f"C ({args.c_stat}) = {c_val:.3f}")
         exit_text.set_text(exit_msg)
-        return [*lines, *points, frame_text, c_text, exit_text]
+        return [*lines, *points, viable_text, frame_text, c_text, exit_text]
 
     anim = FuncAnimation(
         fig,
@@ -278,10 +272,7 @@ def main() -> None:
 
     print(f"Scenario: {label}")
     print(f"Saved GIF: {output_path}")
-    for i, d in enumerate(diagnostics):
-        rep = d["report"]
-        status = "VIABLE" if rep.viable else f"EXIT t={rep.first_exit_time:.2f} via {','.join(rep.violated_vars)}"
-        print(f"traj {i:02d}: {status}")
+    print(f"Viable trajectories: {viable_total}/{len(solutions)}")
 
 
 if __name__ == "__main__":
