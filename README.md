@@ -133,7 +133,7 @@ As a next cleanup step, you may want to standardize public function names to sna
 
 ## Roadmap
 
-Potential next steps for the repository include adding automated tests, defining package metadata and dependencies in `pyproject.toml`, documenting the mathematical model more fully in `docs/`, and deciding whether the internal package name should remain `viabilitykernels` or eventually be renamed to `morphy`.
+Potential next steps for the repository include adding automated tests, defining package metadata and dependencies in `pyproject.toml`, documenting the mathematical model more fully in `docs/`, and identifying a layer of simple inference that connects mutlicellular phenotypical states with kernels trajectories in time.
 
 ## License
 
