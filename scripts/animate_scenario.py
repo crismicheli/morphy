@@ -169,25 +169,12 @@ def main() -> None:
             (DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["T_min"]),
             DEFAULT_BOUNDS["E_max"] - DEFAULT_BOUNDS["E_min"],
             DEFAULT_BOUNDS["T_max"] - DEFAULT_BOUNDS["T_min"],
-            facecolor="none",
-            edgecolor="#00aa44",
-            linewidth=4.0,
-            linestyle="-",
-            zorder=20,
-            clip_on=False,
+            facecolor=BOX_GREEN,
+            alpha=0.12,
+            edgecolor="none",
+            zorder=0.6,
         )
         ax.add_patch(viability_rect)
-        ax.plot(
-            [DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_max"], DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_min"]],
-            [DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_max"], DEFAULT_BOUNDS["T_min"]],
-            color="#00aa44",
-            linewidth=3.2,
-            alpha=1.0,
-            zorder=21,
-            solid_capstyle="round",
-            solid_joinstyle="round",
-            clip_on=False,
-        )
 
     lines = [ax.plot([], [], lw=1.7, alpha=0.90, color=BLUE)[0] for _ in solutions]
     points = [ax.plot([], [], "o", ms=4.2, color=BLUE, zorder=5)[0] for _ in solutions]
