@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario
+from viabilitykernels.simulation import integrate_trajectory
 from viabilitykernels.viability import check_trajectory
 
 BLUE = "#2166ac"
@@ -74,6 +75,37 @@ def aggregate(values: np.ndarray, mode: str) -> float:
     if mode == "max":
         return float(np.max(values))
     raise ValueError(mode)
+
+
+def sample_viable_initial_conditions(
+    x0_center: np.ndarray,
+    n_traj: int,
+    bounds: dict,
+    noise_scale=(0.03, 0.03, 0.03, 0.05),
+    rng_seed: int = 42,
+    clip_min: float = 0.01,
+    max_tries: int = 20000,
+):
+    rng = np.random.default_rng(rng_seed)
+    ics = []
+    tries = 0
+    while len(ics) < n_traj and tries < max_tries:
+        tries += 1
+        x0 = np.clip(np.asarray(x0_center, dtype=float) + rng.normal(scale=noise_scale, size=4), clip_min, None)
+        C, T, E, O = x0
+        inside = (
+            (C >= bounds["C_min"]) and
+            (T >= bounds["T_min"]) and (T <= bounds["T_max"]) and
+            (E >= bounds["E_min"]) and (E <= bounds["E_max"]) and
+            (O >= bounds["O_min"])
+        )
+        if inside:
+            ics.append(x0)
+    if len(ics) < n_traj:
+        raise RuntimeError(
+            f"Could only sample {len(ics)}/{n_traj} viable initial conditions; reduce noise or shift the center deeper inside the box."
+        )
+    return ics
 
 
 def first_exit_index(sol, bounds: dict):
@@ -140,20 +172,25 @@ def main() -> None:
     x0_center[2] *= args.shift_E
     x0_center[3] *= args.shift_O
 
-    result = run_scenario(
-        scenario_cfg=scenario,
-        par=DEFAULT_PARAMS,
-        bounds=DEFAULT_BOUNDS,
+    effective_par = {**DEFAULT_PARAMS, **scenario.get("param_overrides", {})}
+    initial_conditions = sample_viable_initial_conditions(
         x0_center=x0_center,
         n_traj=args.n_traj,
-        t_span=tuple(DEFAULT_SIM["t_span"]),
-        n_eval=DEFAULT_SIM["n_eval"],
-        rng_seed=DEFAULT_SIM["rng_seed"],
+        bounds=DEFAULT_BOUNDS,
         noise_scale=noise_scale,
+        rng_seed=DEFAULT_SIM["rng_seed"],
     )
-
-    solutions = result["solutions"]
-    label = result["label"]
+    solutions = [
+        integrate_trajectory(
+            x0,
+            p=scenario["p"],
+            par=effective_par,
+            t_span=tuple(DEFAULT_SIM["t_span"]),
+            n_eval=DEFAULT_SIM["n_eval"],
+        )
+        for x0 in initial_conditions
+    ]
+    label = scenario["label"]
 
     diagnostics = []
     for sol in solutions:
