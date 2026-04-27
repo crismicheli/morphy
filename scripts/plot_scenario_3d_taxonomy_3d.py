@@ -6,11 +6,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
 PACKAGE_PARENT = REPO_ROOT.parent
 
-if str(PACKAGE_PARENT) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_PARENT))
+for p in (str(PACKAGE_PARENT), str(REPO_ROOT)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 import matplotlib.pyplot as plt
 import numpy as np
