@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
+import warnings
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -19,7 +19,7 @@ import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario
+from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
 BOX_GREEN = "#4dac26"
@@ -67,6 +67,27 @@ def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: f
         [v000, v010, v011, v001],
         [v100, v110, v111, v101],
     ]
+
+
+def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
+    C, T, E, O = [float(v) for v in x0]
+    return (
+        C >= bounds["C_min"]
+        and T >= bounds["T_min"]
+        and T <= bounds["T_max"]
+        and E >= bounds["E_min"]
+        and E <= bounds["E_max"]
+        and O >= bounds["O_min"]
+    )
+
+
+def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray], bounds: dict) -> None:
+    outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
+    if outside:
+        warnings.warn(
+            f"{len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. This is allowed, but please confirm that this is the intended behavior.",
+            stacklevel=2,
+        )
 
 
 def classify_all_points(sol, bounds: dict, stride: int = 8) -> list[dict]:
@@ -118,6 +139,14 @@ def main() -> None:
     x0_center[2] *= args.shift_E
     x0_center[3] *= args.shift_O
 
+    initial_conditions = sample_initial_conditions(
+        x0_center=x0_center,
+        n_traj=args.n_traj,
+        noise_scale=noise_scale,
+        rng_seed=DEFAULT_SIM["rng_seed"],
+    )
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
+
     result = run_scenario(
         scenario_cfg=scenario,
         par=DEFAULT_PARAMS,
@@ -128,6 +157,7 @@ def main() -> None:
         n_eval=DEFAULT_SIM["n_eval"],
         rng_seed=DEFAULT_SIM["rng_seed"],
         noise_scale=noise_scale,
+        initial_conditions=initial_conditions,
     )
 
     solutions = result["solutions"]
@@ -138,8 +168,6 @@ def main() -> None:
     all_points = []
     for sol in solutions:
         all_points.extend(classify_all_points(sol, bounds=DEFAULT_BOUNDS, stride=args.stride))
-
-    counts = Counter(p["label"] for p in all_points)
 
     fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
@@ -179,21 +207,7 @@ def main() -> None:
         E = [p["E"] for p in pts]
         T = [p["T"] for p in pts]
         O = [p["O"] for p in pts]
-        ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=f"{cls} ({len(pts)})")
-
-    legend = ax.legend(
-    loc="upper right",
-    bbox_to_anchor=(0.98, 0.98),
-    frameon=True,
-    fontsize=10,
-    title="Taxonomy state",
-    borderpad=0.8,
-    labelspacing=0.6,
-    handletextpad=0.6,
-    )
-    legend.get_frame().set_facecolor("white")
-    legend.get_frame().set_alpha(0.95)
-    legend.get_frame().set_edgecolor("0.75")
+        ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=cls)
 
     ax.set_title(
         f"{label}\nAll trajectory points in 3D (E, T, O), colored by taxonomy state",
@@ -201,8 +215,16 @@ def main() -> None:
         fontweight="bold",
     )
 
-    legend = ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98), frameon=True, fontsize=9, title="Taxonomy state")
-    legend.get_frame().set_alpha(0.94)
+    legend = ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        frameon=True,
+        fontsize=10,
+        title="Taxonomy state",
+    )
+    legend.get_frame().set_facecolor("white")
+    legend.get_frame().set_alpha(0.95)
+    legend.get_frame().set_edgecolor("0.75")
 
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
