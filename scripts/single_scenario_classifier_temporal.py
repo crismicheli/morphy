@@ -19,7 +19,11 @@ for p in (str(ROOT.parent), str(ROOT), str(SCRIPT_DIR)):
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from temporal_taxonomy_classifier import STATE_COLORS, classify_state, reset_classifier_memory
+from classifiers.temporal_taxonomy_classifier import (
+    STATE_COLORS,
+    classify_state,
+    reset_classifier_memory,
+)
 
 INSIDE_COLOR = "#2166ac"
 OUTSIDE_COLOR = "#d73027"
