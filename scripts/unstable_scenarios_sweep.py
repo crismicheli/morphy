@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_state
+from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
 
 BOX_GREEN = "#4dac26"
