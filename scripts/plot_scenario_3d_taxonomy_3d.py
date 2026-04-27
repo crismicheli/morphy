@@ -20,73 +20,27 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario
-from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_solutions
+from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
 BOX_GREEN = "#4dac26"
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Plot converged final states in 3D (E,T,O) space using a posteriori state taxonomy."
+        description="Plot all trajectory points in 3D (E,T,O) space colored by taxonomy state, without animation."
     )
-    p.add_argument(
-        "--filter",
-        default="Intermediate porosity",
-        help="Substring used to choose a scenario label.",
-    )
-    p.add_argument(
-        "--output",
-        default=str(REPO_ROOT / "figures" / "taxonomy_final_state_3d.png"),
-        help="Output figure path.",
-    )
-    p.add_argument(
-        "--n-traj",
-        type=int,
-        default=DEFAULT_SIM["n_traj"],
-        help="Number of trajectories.",
-    )
-    p.add_argument(
-        "--shift-T",
-        type=float,
-        default=1.0,
-        help="Multiplier applied to initial T center.",
-    )
-    p.add_argument(
-        "--shift-E",
-        type=float,
-        default=1.0,
-        help="Multiplier applied to initial E center.",
-    )
-    p.add_argument(
-        "--shift-O",
-        type=float,
-        default=1.0,
-        help="Multiplier applied to initial O center.",
-    )
-    p.add_argument(
-        "--elev",
-        type=float,
-        default=24.0,
-        help="3D camera elevation.",
-    )
-    p.add_argument(
-        "--azim",
-        type=float,
-        default=-58.0,
-        help="3D camera azimuth.",
-    )
-    p.add_argument(
-        "--show-box",
-        action="store_true",
-        help="Show translucent ETO viability box.",
-    )
-    p.add_argument(
-        "--window",
-        type=int,
-        default=40,
-        help="Terminal sample window used to estimate final state and local derivatives.",
-    )
+    p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
+    p.add_argument("--output", default=str(REPO_ROOT / "figures" / "taxonomy_trajectory_states_3d.png"), help="Output figure path.")
+    p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
+    p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
+    p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
+    p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
+    p.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
+    p.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
+    p.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
+    p.add_argument("--stride", type=int, default=8, help="Subsample factor for plotted timepoints to reduce overplotting.")
     return p.parse_args()
+
 
 def choose_scenario(keyword: str) -> dict:
     matches = [s for s in SCENARIOS if keyword.lower() in s["label"].lower()]
@@ -113,6 +67,36 @@ def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: f
         [v000, v010, v011, v001],
         [v100, v110, v111, v101],
     ]
+
+
+def classify_all_points(sol, bounds: dict, stride: int = 8) -> list[dict]:
+    t = sol.t
+    y = sol.y
+    dt = max(1e-12, float(np.mean(np.diff(t))))
+    dydt = np.gradient(y, dt, axis=1)
+
+    step = max(1, int(stride))
+    snapshots = []
+    for i in range(0, y.shape[1], step):
+        C, T, E, O = [float(v) for v in y[:, i]]
+        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
+        label = classify_state(C, T, E, O, dC, dT, dE, dO, bounds)
+        snapshots.append(
+            {
+                "t": float(t[i]),
+                "C": C,
+                "T": T,
+                "E": E,
+                "O": O,
+                "dC": dC,
+                "dT": dT,
+                "dE": dE,
+                "dO": dO,
+                "label": label,
+                "color": STATE_COLORS[label],
+            }
+        )
+    return snapshots
 
 
 def main() -> None:
@@ -151,10 +135,13 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    snapshots = classify_solutions(solutions, bounds=DEFAULT_BOUNDS, window=args.window)
-    counts = Counter(s["label"] for s in snapshots)
+    all_points = []
+    for sol in solutions:
+        all_points.extend(classify_all_points(sol, bounds=DEFAULT_BOUNDS, stride=args.stride))
 
-    fig = plt.figure(figsize=(9.2, 7.2), constrained_layout=True)
+    counts = Counter(p["label"] for p in all_points)
+
+    fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
 
     E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.08)
@@ -176,27 +163,38 @@ def main() -> None:
             DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
             DEFAULT_BOUNDS["O_min"], O_max_axis,
         )
-        box = Poly3DCollection(faces, facecolors=BOX_GREEN, edgecolors=BOX_GREEN, linewidths=0.8, alpha=0.08)
+        box = Poly3DCollection(
+            faces,
+            facecolors=BOX_GREEN,
+            edgecolors=BOX_GREEN,
+            linewidths=0.8,
+            alpha=0.08,
+        )
         ax.add_collection3d(box)
 
     for cls, color in STATE_COLORS.items():
-        pts = [s for s in snapshots if s["label"] == cls]
+        pts = [p for p in all_points if p["label"] == cls]
         if not pts:
             continue
-        E = [s["E"] for s in pts]
-        T = [s["T"] for s in pts]
-        O = [s["O"] for s in pts]
-        ax.scatter(E, T, O, s=58, alpha=0.94, color=color, label=f"{cls} ({len(pts)})")
+        E = [p["E"] for p in pts]
+        T = [p["T"] for p in pts]
+        O = [p["O"] for p in pts]
+        ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=f"{cls} ({len(pts)})")
 
-    ax.set_title(f"{label}\nPosterior taxonomy of converged final states in 3D (E, T, O)", fontsize=13, fontweight="bold")
-    legend = ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98), frameon=True, fontsize=9)
-    legend.get_frame().set_alpha(0.92)
+    ax.set_title(
+        f"{label}\nAll trajectory points in 3D (E, T, O), colored by taxonomy state",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    legend = ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98), frameon=True, fontsize=9, title="Taxonomy state")
+    legend.get_frame().set_alpha(0.94)
 
     summary_text = " | ".join(f"{k}:{counts[k]}" for k in STATE_COLORS if counts.get(k, 0))
     ax.text2D(
         0.02,
         0.02,
-        f"Classifier: morphy.classifiers.taxonomy_classifier.classify_state(...) | terminal window n={args.window}\n{summary_text}",
+        f"Classifier: morphy.classifiers.taxonomy_classifier.classify_state(C,T,E,O,dC,dT,dE,dO,bounds)\nStride={args.stride} | {summary_text}",
         transform=ax.transAxes,
         va="bottom",
         ha="left",
