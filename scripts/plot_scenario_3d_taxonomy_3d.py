@@ -19,21 +19,22 @@ import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario
+from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
 BOX_GREEN = "#4dac26"
+
 
 def compute_solution_derivatives(sol):
     dt = max(1e-12, float(np.mean(np.diff(sol.t))))
     return np.gradient(sol.y, dt, axis=1)
 
 
-def classify_solution_points(sol, *, bounds, par, scenario_cfg, stride=8):
+def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8):
     dydt = compute_solution_derivatives(sol)
-    labeled_points = []
+    snapshots = []
 
-    for i in range(0, sol.y.shape, stride):
+    for i in range(0, sol.y.shape[1], stride):
         C, T, E, O = [float(v) for v in sol.y[:, i]]
         dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
 
@@ -44,23 +45,19 @@ def classify_solution_points(sol, *, bounds, par, scenario_cfg, stride=8):
             scenario_cfg=scenario_cfg,
         )
 
-        labeled_points.append(
+        snapshots.append(
             {
-                "index": i,
+                "t": float(sol.t[i]),
                 "C": C,
                 "T": T,
                 "E": E,
                 "O": O,
-                "dC": dC,
-                "dT": dT,
-                "dE": dE,
-                "dO": dO,
                 "label": label,
                 "color": STATE_COLORS[label],
             }
         )
 
-    return labeled_points
+    return snapshots
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +65,11 @@ def parse_args() -> argparse.Namespace:
         description="Plot all trajectory points in 3D (E,T,O) space colored by taxonomy state, without animation."
     )
     p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
-    p.add_argument("--output", default=str(REPO_ROOT / "figures" / "taxonomy_trajectory_states_3d.png"), help="Output figure path.")
+    p.add_argument(
+        "--output",
+        default=str(REPO_ROOT / "figures" / "taxonomy_trajectory_states_3d.png"),
+        help="Output figure path.",
+    )
     p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
     p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
     p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
@@ -123,39 +124,10 @@ def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray],
     outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
     if outside:
         warnings.warn(
-            f"{len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. This is allowed, but please confirm that this is the intended behavior.",
+            f"{len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. "
+            f"This is allowed, but please confirm that this is the intended behavior.",
             stacklevel=2,
         )
-
-
-def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8):
-    dydt = compute_solution_derivatives(sol)
-    snapshots = []
-
-    for i in range(0, sol.y.shape, stride):
-        C, T, E, O = [float(v) for v in sol.y[:, i]]
-        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-
-        label = classify_state(
-            C, T, E, O, dC, dT, dE, dO,
-            bounds=bounds,
-            par=par,
-            scenario_cfg=scenario_cfg,
-        )
-
-        snapshots.append(
-            {
-                "t": float(sol.t[i]),
-                "C": C,
-                "T": T,
-                "E": E,
-                "O": O,
-                "label": label,
-                "color": STATE_COLORS[label],
-            }
-        )
-
-    return snapshots
 
 
 def main() -> None:
@@ -211,7 +183,7 @@ def main() -> None:
                 bounds=DEFAULT_BOUNDS,
                 par=DEFAULT_PARAMS,
                 scenario_cfg=scenario,
-                stride=stride,
+                stride=args.stride,
             )
         )
 
