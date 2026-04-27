@@ -5,13 +5,13 @@ from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 
-STATE_COLORS: Dict[str, str] = {
-    "Apoptosis": "#D81B60",
-    "Migration": "#1E88E5",
-    "Proliferation": "#43A047",
-    "Quiescence": "#FB8C00",
-    "Diversification": "#8E24AA",
-    "Undetermined": "#00ACC1",
+STATE_COLORS = {
+    "Apoptosis": "#111111",       # near-black
+    "Migration": "#00B7FF",       # vivid cyan
+    "Proliferation": "#FF7A00",   # vivid orange
+    "Quiescence": "#2ECC40",      # bright green
+    "Diversification": "#8E44AD", # strong purple
+    "Undetermined": "#FFD400",    # saturated yellow
 }
 
 # Biologically interpretable static parameters intentionally used by the classifier.
