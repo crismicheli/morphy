@@ -19,10 +19,48 @@ import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_state
+from viabilitykernels.simulation import run_scenario
+from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
 BOX_GREEN = "#4dac26"
+
+def compute_solution_derivatives(sol):
+    dt = max(1e-12, float(np.mean(np.diff(sol.t))))
+    return np.gradient(sol.y, dt, axis=1)
+
+
+def classify_solution_points(sol, *, bounds, par, scenario_cfg, stride=8):
+    dydt = compute_solution_derivatives(sol)
+    labeled_points = []
+
+    for i in range(0, sol.y.shape, stride):
+        C, T, E, O = [float(v) for v in sol.y[:, i]]
+        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
+
+        label = classify_state(
+            C, T, E, O, dC, dT, dE, dO,
+            bounds=bounds,
+            par=par,
+            scenario_cfg=scenario_cfg,
+        )
+
+        labeled_points.append(
+            {
+                "index": i,
+                "C": C,
+                "T": T,
+                "E": E,
+                "O": O,
+                "dC": dC,
+                "dT": dT,
+                "dE": dE,
+                "dO": dO,
+                "label": label,
+                "color": STATE_COLORS[label],
+            }
+        )
+
+    return labeled_points
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,33 +128,33 @@ def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray],
         )
 
 
-def classify_all_points(sol, bounds: dict, stride: int = 8) -> list[dict]:
-    t = sol.t
-    y = sol.y
-    dt = max(1e-12, float(np.mean(np.diff(t))))
-    dydt = np.gradient(y, dt, axis=1)
-
-    step = max(1, int(stride))
+def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8):
+    dydt = compute_solution_derivatives(sol)
     snapshots = []
-    for i in range(0, y.shape[1], step):
-        C, T, E, O = [float(v) for v in y[:, i]]
+
+    for i in range(0, sol.y.shape, stride):
+        C, T, E, O = [float(v) for v in sol.y[:, i]]
         dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        label = classify_state(C, T, E, O, dC, dT, dE, dO, bounds)
+
+        label = classify_state(
+            C, T, E, O, dC, dT, dE, dO,
+            bounds=bounds,
+            par=par,
+            scenario_cfg=scenario_cfg,
+        )
+
         snapshots.append(
             {
-                "t": float(t[i]),
+                "t": float(sol.t[i]),
                 "C": C,
                 "T": T,
                 "E": E,
                 "O": O,
-                "dC": dC,
-                "dT": dT,
-                "dE": dE,
-                "dO": dO,
                 "label": label,
                 "color": STATE_COLORS[label],
             }
         )
+
     return snapshots
 
 
@@ -167,7 +205,15 @@ def main() -> None:
 
     all_points = []
     for sol in solutions:
-        all_points.extend(classify_all_points(sol, bounds=DEFAULT_BOUNDS, stride=args.stride))
+        all_points.extend(
+            classify_all_points(
+                sol,
+                bounds=DEFAULT_BOUNDS,
+                par=DEFAULT_PARAMS,
+                scenario_cfg=scenario,
+                stride=stride,
+            )
+        )
 
     fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
