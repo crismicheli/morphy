@@ -8,7 +8,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
-from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -267,30 +266,60 @@ def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frame
     line_artists = []
     point_artists = []
     for sol in solutions:
-        E0 = float(sol.y[2][0])
-        T0 = float(sol.y[1][0])
-        O0 = float(sol.y[3][0])
-        inside0 = is_inside_eto_box(E0, T0, O0, DEFAULT_BOUNDS)
-        line = Line3DCollection([], linewidths=1.4, alpha=0.75)
+        seed_segments = np.array([
+            [
+                [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+                [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+            ]
+        ])
+        inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
+        line = Line3DCollection(seed_segments, linewidths=1.4, alpha=0.75)
+        line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
         ax.add_collection3d(line)
-        point = ax.plot([E0], [T0], [O0], "o", ms=4.5, color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR)[0]
+        point = ax.plot(
+            [float(sol.y[2][0])],
+            [float(sol.y[1][0])],
+            [float(sol.y[3][0])],
+            "o",
+            ms=4.5,
+            color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR,
+        )[0]
         line_artists.append(line)
         point_artists.append(point)
 
     ax.set_title(f"{label}\nAnimated ensemble in 3D (E, T, O)", fontsize=13, fontweight="bold")
 
     def init():
-        for line, point in zip(line_artists, point_artists):
-            line.set_segments([])
-            point.set_data([], [])
-            point.set_3d_properties([])
+        for sol, line, point in zip(solutions, line_artists, point_artists):
+            seed_segments = np.array([
+                [
+                    [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+                    [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+                ]
+            ])
+            line.set_segments(seed_segments)
+            inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
+            line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
+            point.set_data([float(sol.y[2][0])], [float(sol.y[1][0])])
+            point.set_3d_properties([float(sol.y[3][0])])
+            point.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
         return [*line_artists, *point_artists]
 
     def update(frame: int):
         for sol, line, point, seg_colors in zip(solutions, line_artists, point_artists, segment_color_lists):
             segments = build_line_segments_3d(sol, frame)
-            line.set_segments(segments)
-            if len(segments) > 0:
+            if len(segments) == 0:
+                seed_segments = np.array([
+                    [
+                        [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+                        [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
+                    ]
+                ])
+                line.set_segments(seed_segments)
+                inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
+                line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
+            else:
+                line.set_segments(segments)
                 line.set_color(seg_colors[: len(segments)])
             E_now = float(sol.y[2][frame])
             T_now = float(sol.y[1][frame])
