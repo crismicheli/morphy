@@ -385,7 +385,7 @@ def main() -> None:
             anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
 
             save_taxonomy_plot(result, scenario, plot_path, show_box=True, stride=8)
-            save_eto_animation(result, anim_path, fps=10, max_frames=180, show_box=True)
+            save_eto_animation(result, anim_path, fps=10, max_frames=120, show_box=True)
 
             total_ensemble_runs += 1
             print(f"Done: {scenario['label']} | {regime}")
