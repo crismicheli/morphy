@@ -373,4 +373,43 @@ def main() -> None:
 
             initial_conditions = sample_initial_conditions(
                 x0_center=x0_center,
-                
+                n_traj=DEFAULT_SIM["n_traj"],
+                noise_scale=noise_scale,
+                rng_seed=DEFAULT_SIM["rng_seed"],
+            )
+
+            tag = f"{scenario['label']} | {regime}"
+            warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS, tag)
+
+            result = run_scenario(
+                scenario_cfg=scenario,
+                par=DEFAULT_PARAMS,
+                bounds=DEFAULT_BOUNDS,
+                x0_center=x0_center,
+                n_traj=DEFAULT_SIM["n_traj"],
+                t_span=tuple(DEFAULT_SIM["t_span"]),
+                n_eval=DEFAULT_SIM["n_eval"],
+                rng_seed=DEFAULT_SIM["rng_seed"],
+                noise_scale=noise_scale,
+                initial_conditions=initial_conditions,
+            )
+
+            slug = scenario["label"].lower().replace(" ", "_").replace("-", "_")
+            plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d.png"
+            anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
+
+            save_taxonomy_plot(result, scenario, plot_path, show_box=True, stride=8)
+            save_eto_animation(result, anim_path, fps=10, max_frames=120, show_box=True)
+
+            total_ensemble_runs += 1
+            print(f"Done: {scenario['label']} | {regime}")
+
+    total_trajectories = total_ensemble_runs * DEFAULT_SIM["n_traj"]
+    print(f"Scenario class: {scenario_class}")
+    print(f"Ensemble runs: {total_ensemble_runs}")
+    print(f"Trajectory simulations: {total_trajectories}")
+    print(f"Output files: {total_ensemble_runs * 2}")
+
+
+if __name__ == "__main__":
+    main()
