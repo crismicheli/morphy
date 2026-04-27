@@ -181,6 +181,20 @@ def main() -> None:
         O = [p["O"] for p in pts]
         ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=f"{cls} ({len(pts)})")
 
+    legend = ax.legend(
+    loc="upper right",
+    bbox_to_anchor=(0.98, 0.98),
+    frameon=True,
+    fontsize=10,
+    title="Taxonomy state",
+    borderpad=0.8,
+    labelspacing=0.6,
+    handletextpad=0.6,
+    )
+    legend.get_frame().set_facecolor("white")
+    legend.get_frame().set_alpha(0.95)
+    legend.get_frame().set_edgecolor("0.75")
+
     ax.set_title(
         f"{label}\nAll trajectory points in 3D (E, T, O), colored by taxonomy state",
         fontsize=13,
@@ -189,18 +203,6 @@ def main() -> None:
 
     legend = ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98), frameon=True, fontsize=9, title="Taxonomy state")
     legend.get_frame().set_alpha(0.94)
-
-    summary_text = " | ".join(f"{k}:{counts[k]}" for k in STATE_COLORS if counts.get(k, 0))
-    ax.text2D(
-        0.02,
-        0.02,
-        f"Classifier: morphy.classifiers.taxonomy_classifier.classify_state(C,T,E,O,dC,dT,dE,dO,bounds)\nStride={args.stride} | {summary_text}",
-        transform=ax.transAxes,
-        va="bottom",
-        ha="left",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.94),
-    )
 
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
