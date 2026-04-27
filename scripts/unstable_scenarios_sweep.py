@@ -4,12 +4,12 @@ from __future__ import annotations
 import sys
 import warnings
 from pathlib import Path
-from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.collections import LineCollection
+from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -63,6 +63,14 @@ def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
     )
 
 
+def is_inside_eto_box(E: float, T: float, O: float, bounds: dict) -> bool:
+    return (
+        bounds["E_min"] <= E <= bounds["E_max"]
+        and bounds["T_min"] <= T <= bounds["T_max"]
+        and O >= bounds["O_min"]
+    )
+
+
 def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray], bounds: dict, tag: str) -> None:
     outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
     if outside:
@@ -73,13 +81,7 @@ def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray],
         )
 
 
-def classify_all_points(
-    sol,
-    bounds: dict,
-    par: dict,
-    scenario_cfg: dict,
-    stride: int = 8,
-) -> list[dict]:
+def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8) -> list[dict]:
     t = sol.t
     y = sol.y
     dt = max(1e-12, float(np.mean(np.diff(t))))
@@ -124,19 +126,19 @@ def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, flo
     return center, noise
 
 
-def save_taxonomy_plot(result: dict, output_path: Path, show_box: bool = True, stride: int = 8) -> None:
+def save_taxonomy_plot(result: dict, scenario_cfg: dict, output_path: Path, show_box: bool = True, stride: int = 8) -> None:
     solutions = result["solutions"]
     label = result["label"]
-    classifier_context = result["classifier_context"]
+    effective_par = result.get("effective_par", DEFAULT_PARAMS)
 
     all_points = []
     for sol in solutions:
         all_points.extend(
             classify_all_points(
                 sol,
-                bounds=classifier_context["bounds"],
-                par=classifier_context["par"],
-                scenario_cfg=classifier_context["scenario_cfg"],
+                bounds=DEFAULT_BOUNDS,
+                par=effective_par,
+                scenario_cfg=scenario_cfg,
                 stride=stride,
             )
         )
@@ -203,9 +205,29 @@ def save_taxonomy_plot(result: dict, output_path: Path, show_box: bool = True, s
     plt.close(fig)
 
 
+def segment_colors_for_solution(sol, bounds: dict) -> list[str]:
+    E = sol.y[2]
+    T = sol.y[1]
+    O = sol.y[3]
+    colors = []
+    for i in range(len(sol.t) - 1):
+        inside = is_inside_eto_box(float(E[i + 1]), float(T[i + 1]), float(O[i + 1]), bounds)
+        colors.append(INSIDE_COLOR if inside else OUTSIDE_COLOR)
+    return colors
+
+
+def build_line_segments_3d(sol, frame: int):
+    E = sol.y[2][: frame + 1]
+    T = sol.y[1][: frame + 1]
+    O = sol.y[3][: frame + 1]
+    if len(E) < 2:
+        return np.empty((0, 2, 3))
+    points = np.column_stack([E, T, O])
+    return np.stack([points[:-1], points[1:]], axis=1)
+
+
 def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frames: int = 180, show_box: bool = True) -> None:
     solutions = result["solutions"]
-    initial_conditions = result["initial_conditions"]
     label = result["label"]
 
     n_time = min(len(solutions[0].t), max_frames)
@@ -241,12 +263,17 @@ def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frame
         )
         ax.add_collection3d(box)
 
+    segment_color_lists = [segment_colors_for_solution(sol, DEFAULT_BOUNDS) for sol in solutions]
     line_artists = []
     point_artists = []
-    for sol, x0 in zip(solutions, initial_conditions):
-        color = INSIDE_COLOR if is_inside_viability_box(x0, DEFAULT_BOUNDS) else OUTSIDE_COLOR
-        line = ax.plot([], [], [], lw=1.4, alpha=0.75, color=color)[0]
-        point = ax.plot([], [], [], "o", ms=4.5, color=color)[0]
+    for sol in solutions:
+        E0 = float(sol.y[2][0])
+        T0 = float(sol.y[1][0])
+        O0 = float(sol.y[3][0])
+        inside0 = is_inside_eto_box(E0, T0, O0, DEFAULT_BOUNDS)
+        line = Line3DCollection([], linewidths=1.4, alpha=0.75)
+        ax.add_collection3d(line)
+        point = ax.plot([E0], [T0], [O0], "o", ms=4.5, color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR)[0]
         line_artists.append(line)
         point_artists.append(point)
 
@@ -254,21 +281,23 @@ def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frame
 
     def init():
         for line, point in zip(line_artists, point_artists):
-            line.set_data([], [])
-            line.set_3d_properties([])
+            line.set_segments([])
             point.set_data([], [])
             point.set_3d_properties([])
         return [*line_artists, *point_artists]
 
     def update(frame: int):
-        for sol, line, point in zip(solutions, line_artists, point_artists):
-            E_traj = sol.y[2][: frame + 1]
-            T_traj = sol.y[1][: frame + 1]
-            O_traj = sol.y[3][: frame + 1]
-            line.set_data(E_traj, T_traj)
-            line.set_3d_properties(O_traj)
-            point.set_data([E_traj[-1]], [T_traj[-1]])
-            point.set_3d_properties([O_traj[-1]])
+        for sol, line, point, seg_colors in zip(solutions, line_artists, point_artists, segment_color_lists):
+            segments = build_line_segments_3d(sol, frame)
+            line.set_segments(segments)
+            if len(segments) > 0:
+                line.set_color(seg_colors[: len(segments)])
+            E_now = float(sol.y[2][frame])
+            T_now = float(sol.y[1][frame])
+            O_now = float(sol.y[3][frame])
+            point.set_data([E_now], [T_now])
+            point.set_3d_properties([O_now])
+            point.set_color(INSIDE_COLOR if is_inside_eto_box(E_now, T_now, O_now, DEFAULT_BOUNDS) else OUTSIDE_COLOR)
         return [*line_artists, *point_artists]
 
     anim = FuncAnimation(
@@ -277,7 +306,7 @@ def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frame
         init_func=init,
         frames=n_time,
         interval=1000 / max(fps, 1),
-        blit=True,
+        blit=False,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -305,6 +334,7 @@ def main() -> None:
                 noise_scale=noise_scale,
                 rng_seed=DEFAULT_SIM["rng_seed"],
             )
+
             tag = f"{scenario['label']} | {regime}"
             warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS, tag)
 
@@ -316,4 +346,26 @@ def main() -> None:
                 n_traj=DEFAULT_SIM["n_traj"],
                 t_span=tuple(DEFAULT_SIM["t_span"]),
                 n_eval=DEFAULT_SIM["n_eval"],
-       
+                rng_seed=DEFAULT_SIM["rng_seed"],
+                noise_scale=noise_scale,
+                initial_conditions=initial_conditions,
+            )
+
+            slug = scenario["label"].lower().replace(" ", "_").replace("-", "_")
+            plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d.png"
+            anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
+
+            save_taxonomy_plot(result, scenario, plot_path, show_box=True, stride=8)
+            save_eto_animation(result, anim_path, fps=10, max_frames=180, show_box=True)
+
+            total_ensemble_runs += 1
+            print(f"Done: {scenario['label']} | {regime}")
+
+    total_trajectories = total_ensemble_runs * DEFAULT_SIM["n_traj"]
+    print(f"Ensemble runs: {total_ensemble_runs}")
+    print(f"Trajectory simulations: {total_trajectories}")
+    print(f"Output files: {total_ensemble_runs * 2}")
+
+
+if __name__ == "__main__":
+    main()
