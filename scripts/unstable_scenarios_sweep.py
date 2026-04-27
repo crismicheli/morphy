@@ -19,7 +19,6 @@ from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
 
-
 BOX_GREEN = "#4dac26"
 OUTSIDE_COLOR = "#d73027"
 INSIDE_COLOR = "#2166ac"
@@ -74,7 +73,13 @@ def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray],
         )
 
 
-def classify_all_points(sol, bounds: dict, stride: int = 8) -> list[dict]:
+def classify_all_points(
+    sol,
+    bounds: dict,
+    par: dict,
+    scenario_cfg: dict,
+    stride: int = 8,
+) -> list[dict]:
     t = sol.t
     y = sol.y
     dt = max(1e-12, float(np.mean(np.diff(t))))
@@ -84,7 +89,12 @@ def classify_all_points(sol, bounds: dict, stride: int = 8) -> list[dict]:
     for i in range(0, y.shape[1], stride):
         C, T, E, O = [float(v) for v in y[:, i]]
         dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        label = classify_state(C, T, E, O, dC, dT, dE, dO, bounds)
+        label = classify_state(
+            C, T, E, O, dC, dT, dE, dO,
+            bounds=bounds,
+            par=par,
+            scenario_cfg=scenario_cfg,
+        )
         snapshots.append(
             {
                 "t": float(t[i]),
@@ -117,10 +127,19 @@ def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, flo
 def save_taxonomy_plot(result: dict, output_path: Path, show_box: bool = True, stride: int = 8) -> None:
     solutions = result["solutions"]
     label = result["label"]
+    classifier_context = result["classifier_context"]
 
     all_points = []
     for sol in solutions:
-        all_points.extend(classify_all_points(sol, bounds=DEFAULT_BOUNDS, stride=stride))
+        all_points.extend(
+            classify_all_points(
+                sol,
+                bounds=classifier_context["bounds"],
+                par=classifier_context["par"],
+                scenario_cfg=classifier_context["scenario_cfg"],
+                stride=stride,
+            )
+        )
 
     fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
@@ -286,7 +305,6 @@ def main() -> None:
                 noise_scale=noise_scale,
                 rng_seed=DEFAULT_SIM["rng_seed"],
             )
-
             tag = f"{scenario['label']} | {regime}"
             warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS, tag)
 
@@ -298,26 +316,4 @@ def main() -> None:
                 n_traj=DEFAULT_SIM["n_traj"],
                 t_span=tuple(DEFAULT_SIM["t_span"]),
                 n_eval=DEFAULT_SIM["n_eval"],
-                rng_seed=DEFAULT_SIM["rng_seed"],
-                noise_scale=noise_scale,
-                initial_conditions=initial_conditions,
-            )
-
-            slug = scenario["label"].lower().replace(" ", "_").replace("-", "_")
-            plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d.png"
-            anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
-
-            save_taxonomy_plot(result, plot_path, show_box=True, stride=8)
-            save_eto_animation(result, anim_path, fps=10, max_frames=180, show_box=True)
-
-            total_ensemble_runs += 1
-            print(f"Done: {scenario['label']} | {regime}")
-
-    total_trajectories = total_ensemble_runs * DEFAULT_SIM["n_traj"]
-    print(f"Ensemble runs: {total_ensemble_runs}")
-    print(f"Trajectory simulations: {total_trajectories}")
-    print(f"Output files: {total_ensemble_runs * 2}")
-
-
-if __name__ == "__main__":
-    main()
+       
