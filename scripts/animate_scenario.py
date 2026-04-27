@@ -3,31 +3,31 @@ from __future__ import annotations
 
 import argparse
 import sys
-import warnings
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-PACKAGE_PARENT = REPO_ROOT.parent
-
-for p in (str(PACKAGE_PARENT), str(REPO_ROOT)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario, sample_initial_conditions
+from viabilitykernels.simulation import run_scenario
 from viabilitykernels.phase_plane import ET_field, make_grid
+
+INSIDE_COLOR = "#2166ac"
+OUTSIDE_COLOR = "#d73027"
+BOX_GREEN = "#4dac26"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Animate one simulation scenario and save a GIF.")
     parser.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
-    parser.add_argument("--output", default=str(REPO_ROOT / "figures" / "intermediate_porosity_animation.gif"), help="Output GIF path.")
+    parser.add_argument("--output", default=str(ROOT / "figures" / "intermediate_porosity_animation.gif"), help="Output GIF path.")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second for the GIF.")
     parser.add_argument("--max-frames", type=int, default=160, help="Maximum number of animation frames to render.")
     parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories to simulate.")
@@ -44,25 +44,30 @@ def choose_scenario(keyword: str) -> dict:
     return matches[0]
 
 
-def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
-    C, T, E, O = [float(v) for v in x0]
+def point_inside_et_box(E: float, T: float, bounds: dict) -> bool:
     return (
-        C >= bounds["C_min"]
-        and T >= bounds["T_min"]
-        and T <= bounds["T_max"]
-        and E >= bounds["E_min"]
-        and E <= bounds["E_max"]
-        and O >= bounds["O_min"]
+        bounds["E_min"] <= E <= bounds["E_max"]
+        and bounds["T_min"] <= T <= bounds["T_max"]
     )
 
 
-def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray], bounds: dict) -> None:
-    outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
-    if outside:
-        warnings.warn(
-            f"{len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. This is allowed, but please confirm that this is the intended behavior.",
-            stacklevel=2,
-        )
+def segment_colors_for_solution(sol, bounds: dict) -> list[str]:
+    E = sol.y[2]
+    T = sol.y[1]
+    colors = []
+    for i in range(len(sol.t) - 1):
+        inside = point_inside_et_box(float(E[i + 1]), float(T[i + 1]), bounds)
+        colors.append(INSIDE_COLOR if inside else OUTSIDE_COLOR)
+    return colors
+
+
+def build_line_segments_2d(sol, frame: int):
+    E = sol.y[2][: frame + 1]
+    T = sol.y[1][: frame + 1]
+    if len(E) < 2:
+        return np.empty((0, 2, 2))
+    points = np.column_stack([E, T])
+    return np.stack([points[:-1], points[1:]], axis=1)
 
 
 def main() -> None:
@@ -83,14 +88,6 @@ def main() -> None:
     x0_center[1] *= args.shift_T
     x0_center[2] *= args.shift_E
 
-    initial_conditions = sample_initial_conditions(
-        x0_center=x0_center,
-        n_traj=args.n_traj,
-        noise_scale=noise_scale,
-        rng_seed=DEFAULT_SIM["rng_seed"],
-    )
-    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
-
     result = run_scenario(
         scenario_cfg=scenario,
         par=DEFAULT_PARAMS,
@@ -101,7 +98,6 @@ def main() -> None:
         n_eval=DEFAULT_SIM["n_eval"],
         rng_seed=DEFAULT_SIM["rng_seed"],
         noise_scale=noise_scale,
-        initial_conditions=initial_conditions,
     )
 
     solutions = result["solutions"]
@@ -139,15 +135,24 @@ def main() -> None:
         (DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["T_min"]),
         DEFAULT_BOUNDS["E_max"] - DEFAULT_BOUNDS["E_min"],
         DEFAULT_BOUNDS["T_max"] - DEFAULT_BOUNDS["T_min"],
-        facecolor="#4dac26",
+        facecolor=BOX_GREEN,
         alpha=0.10,
         edgecolor="none",
     )
     ax.add_patch(viability_rect)
 
-    colors = ["#2166ac" if r.viable else "#d73027" for r in reports]
-    lines = [ax.plot([], [], lw=1.6, alpha=0.85, color=c)[0] for c in colors]
-    points = [ax.plot([], [], "o", ms=4, color=c, zorder=5)[0] for c in colors]
+    segment_color_lists = [segment_colors_for_solution(sol, DEFAULT_BOUNDS) for sol in solutions]
+    line_collections = []
+    points = []
+    for sol in solutions:
+        E0 = float(sol.y[2][0])
+        T0 = float(sol.y[1][0])
+        inside0 = point_inside_et_box(E0, T0, DEFAULT_BOUNDS)
+        lc = LineCollection([], linewidths=1.6, alpha=0.85)
+        ax.add_collection(lc)
+        point = ax.plot([], [], "o", ms=4, color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR, zorder=5)[0]
+        line_collections.append(lc)
+        points.append(point)
 
     ax.set_title(f"{label}\nAnimated ensemble in the (E, T) phase plane", fontsize=12, fontweight="bold")
     ax.set_xlabel("ECM density E")
@@ -169,18 +174,23 @@ def main() -> None:
     )
 
     def init():
-        for line, point in zip(lines, points):
-            line.set_data([], [])
+        for lc, point in zip(line_collections, points):
+            lc.set_segments([])
+            lc.set_color([])
             point.set_data([], [])
-        return [*lines, *points, subtitle]
+        return [*line_collections, *points, subtitle]
 
     def update(frame: int):
-        for sol, line, point in zip(solutions, lines, points):
-            E_traj = sol.y[2][: frame + 1]
-            T_traj = sol.y[1][: frame + 1]
-            line.set_data(E_traj, T_traj)
-            point.set_data([E_traj[-1]], [T_traj[-1]])
-        return [*lines, *points, subtitle]
+        for sol, lc, point, seg_colors in zip(solutions, line_collections, points, segment_color_lists):
+            segments = build_line_segments_2d(sol, frame)
+            lc.set_segments(segments)
+            if len(segments) > 0:
+                lc.set_color(seg_colors[: len(segments)])
+            E_now = float(sol.y[2][frame])
+            T_now = float(sol.y[1][frame])
+            point.set_data([E_now], [T_now])
+            point.set_color(INSIDE_COLOR if point_inside_et_box(E_now, T_now, DEFAULT_BOUNDS) else OUTSIDE_COLOR)
+        return [*line_collections, *points, subtitle]
 
     anim = FuncAnimation(
         fig,
