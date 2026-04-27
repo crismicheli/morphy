@@ -4,12 +4,12 @@ from __future__ import annotations
 import numpy as np
 
 STATE_COLORS = {
-    "Apoptosis": "#d73027",
-    "Migration": "#4575b4",
-    "Proliferation": "#1a9850",
-    "Quiescence": "#66bd63",
-    "Diversification": "#984ea3",
-    "Undetermined": "#808080",
+    "Apoptosis": "#D81B60",       # magenta-red
+    "Migration": "#1E88E5",       # saturated blue
+    "Proliferation": "#43A047",   # green
+    "Quiescence": "#FB8C00",      # orange
+    "Diversification": "#8E24AA", # violet
+    "Undetermined": "#00ACC1",    # cyan
 }
 
 
