@@ -1,46 +1,48 @@
-
 #!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
-import re
 import sys
+import warnings
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PACKAGE_PARENT = REPO_ROOT.parent
 
-import numpy as np
+for p in (str(PACKAGE_PARENT), str(REPO_ROOT)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import integrate_trajectory
-from viabilitykernels.viability import check_trajectory
+from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 
-BLUE = "#2166ac"
-RED = "#d73027"
 BOX_GREEN = "#4dac26"
+OUTSIDE_COLOR = "#d73027"
+INSIDE_COLOR = "#2166ac"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Animate one scenario in 3D ETO space.")
-    parser.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
-    parser.add_argument("--output", default=None, help="Output GIF path. If omitted, a scenario-based name is generated.")
-    parser.add_argument("--fps", type=int, default=10, help="Frames per second.")
-    parser.add_argument("--max-frames", type=int, default=160, help="Maximum number of frames.")
-    parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
-    parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
-    parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
-    parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
-    parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
-    parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
-    parser.add_argument("--show-box", action="store_true", help="Show the admissible ETO box.")
-    parser.add_argument("--c-stat", choices=["mean", "median", "min", "max"], default="mean", help="How to aggregate C across trajectories for the numeric readout.")
-    parser.add_argument("--focus-index", type=int, default=0, help="Trajectory index used for exit diagnosis readout.")
-    return parser.parse_args()
+    p = argparse.ArgumentParser(
+        description="Animate a 3D ensemble in (E, T, O) space with an optional viability box. Initial conditions are allowed to start outside the box, but a warning is emitted when they do."
+    )
+    p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
+    p.add_argument("--output", default=str(REPO_ROOT / "figures" / "scenario_3d_eto_box.gif"), help="Output GIF path.")
+    p.add_argument("--fps", type=int, default=10, help="Frames per second for the GIF.")
+    p.add_argument("--max-frames", type=int, default=180, help="Maximum number of animation frames to render.")
+    p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories to simulate.")
+    p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to the initial T center.")
+    p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to the initial E center.")
+    p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to the initial O center.")
+    p.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
+    p.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
+    p.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
+    return p.parse_args()
 
 
 def choose_scenario(keyword: str) -> dict:
@@ -51,106 +53,44 @@ def choose_scenario(keyword: str) -> dict:
     return matches[0]
 
 
-def slugify(label: str) -> str:
-    s = label.lower()
-    s = s.replace("η", "eta").replace("β", "beta").replace("δ", "delta").replace("ρ", "rho")
-    s = re.sub(r"\([^)]*\)", "", s)
-    s = re.sub(r"[^a-z0-9]+", "_", s)
-    s = re.sub(r"_+", "_", s).strip("_")
-    return s or "scenario"
-
-
-def default_output_path(label: str, show_box: bool) -> Path:
-    suffix = "_eto_3d_box.gif" if show_box else "_eto_3d.gif"
-    return ROOT / "figures" / f"{slugify(label)}{suffix}"
-
-
-def aggregate(values: np.ndarray, mode: str) -> float:
-    if mode == "mean":
-        return float(np.mean(values))
-    if mode == "median":
-        return float(np.median(values))
-    if mode == "min":
-        return float(np.min(values))
-    if mode == "max":
-        return float(np.max(values))
-    raise ValueError(mode)
-
-
-def sample_viable_initial_conditions(
-    x0_center: np.ndarray,
-    n_traj: int,
-    bounds: dict,
-    noise_scale=(0.03, 0.03, 0.03, 0.05),
-    rng_seed: int = 42,
-    clip_min: float = 0.01,
-    max_tries: int = 20000,
-):
-    rng = np.random.default_rng(rng_seed)
-    ics = []
-    tries = 0
-    while len(ics) < n_traj and tries < max_tries:
-        tries += 1
-        x0 = np.clip(np.asarray(x0_center, dtype=float) + rng.normal(scale=noise_scale, size=4), clip_min, None)
-        C, T, E, O = x0
-        inside = (
-            (C >= bounds["C_min"]) and
-            (T >= bounds["T_min"]) and (T <= bounds["T_max"]) and
-            (E >= bounds["E_min"]) and (E <= bounds["E_max"]) and
-            (O >= bounds["O_min"])
-        )
-        if inside:
-            ics.append(x0)
-    if len(ics) < n_traj:
-        raise RuntimeError(
-            f"Could only sample {len(ics)}/{n_traj} viable initial conditions; reduce noise or shift the center deeper inside the box."
-        )
-    return ics
-
-
-def first_exit_index(sol, bounds: dict):
-    C, T, E, O = sol.y
-    inside = (
-        (C >= bounds["C_min"]) &
-        (T >= bounds["T_min"]) & (T <= bounds["T_max"]) &
-        (E >= bounds["E_min"]) & (E <= bounds["E_max"]) &
-        (O >= bounds["O_min"])
-    )
-    bad = np.where(~inside)[0]
-    return None if len(bad) == 0 else int(bad[0])
-
-
-def add_visible_box(ax, bounds: dict, z_top: float):
-    e0, e1 = bounds["E_min"], bounds["E_max"]
-    t0, t1 = bounds["T_min"], bounds["T_max"]
-    o0, o1 = bounds["O_min"], z_top
-
-    faces = [
-        [[e0, t0, o0], [e1, t0, o0], [e1, t1, o0], [e0, t1, o0]],
-        [[e0, t0, o1], [e1, t0, o1], [e1, t1, o1], [e0, t1, o1]],
-        [[e0, t0, o0], [e1, t0, o0], [e1, t0, o1], [e0, t0, o1]],
-        [[e0, t1, o0], [e1, t1, o0], [e1, t1, o1], [e0, t1, o1]],
-        [[e0, t0, o0], [e0, t1, o0], [e0, t1, o1], [e0, t0, o1]],
-        [[e1, t0, o0], [e1, t1, o0], [e1, t1, o1], [e1, t0, o1]],
+def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: float):
+    v000 = [e0, t0, o0]
+    v100 = [e1, t0, o0]
+    v110 = [e1, t1, o0]
+    v010 = [e0, t1, o0]
+    v001 = [e0, t0, o1]
+    v101 = [e1, t0, o1]
+    v111 = [e1, t1, o1]
+    v011 = [e0, t1, o1]
+    return [
+        [v000, v100, v110, v010],
+        [v001, v101, v111, v011],
+        [v000, v100, v101, v001],
+        [v010, v110, v111, v011],
+        [v000, v010, v011, v001],
+        [v100, v110, v111, v101],
     ]
-    poly = Poly3DCollection(
-        faces,
-        facecolors=(0.301, 0.675, 0.149, 0.22),
-        edgecolors=(0.301, 0.675, 0.149, 0.95),
-        linewidths=1.6,
-    )
-    ax.add_collection3d(poly)
 
-    edges = [
-        ([e0, e1], [t0, t0], [o0, o0]), ([e0, e1], [t1, t1], [o0, o0]),
-        ([e0, e0], [t0, t1], [o0, o0]), ([e1, e1], [t0, t1], [o0, o0]),
-        ([e0, e1], [t0, t0], [o1, o1]), ([e0, e1], [t1, t1], [o1, o1]),
-        ([e0, e0], [t0, t1], [o1, o1]), ([e1, e1], [t0, t1], [o1, o1]),
-        ([e0, e0], [t0, t0], [o0, o1]), ([e1, e1], [t0, t0], [o0, o1]),
-        ([e0, e0], [t1, t1], [o0, o1]), ([e1, e1], [t1, t1], [o0, o1]),
-    ]
-    for xs, ys, zs in edges:
-        ax.plot(xs, ys, zs, color=BOX_GREEN, lw=1.8, alpha=0.95)
+
+def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
+    C, T, E, O = [float(v) for v in x0]
+    return (
+        C >= bounds["C_min"]
+        and T >= bounds["T_min"]
+        and T <= bounds["T_max"]
+        and E >= bounds["E_min"]
+        and E <= bounds["E_max"]
+        and O >= bounds["O_min"]
+    )
+
+
+def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray], bounds: dict) -> None:
+    outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
+    if outside:
+        warnings.warn(
+            f"{len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. This is allowed, but please confirm that this is the intended behavior.",
+            stacklevel=2,
+        )
 
 
 def main() -> None:
@@ -172,43 +112,41 @@ def main() -> None:
     x0_center[2] *= args.shift_E
     x0_center[3] *= args.shift_O
 
-    effective_par = {**DEFAULT_PARAMS, **scenario.get("param_overrides", {})}
-    initial_conditions = sample_viable_initial_conditions(
+    initial_conditions = sample_initial_conditions(
         x0_center=x0_center,
         n_traj=args.n_traj,
-        bounds=DEFAULT_BOUNDS,
         noise_scale=noise_scale,
         rng_seed=DEFAULT_SIM["rng_seed"],
     )
-    solutions = [
-        integrate_trajectory(
-            x0,
-            p=scenario["p"],
-            par=effective_par,
-            t_span=tuple(DEFAULT_SIM["t_span"]),
-            n_eval=DEFAULT_SIM["n_eval"],
-        )
-        for x0 in initial_conditions
-    ]
-    label = scenario["label"]
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
 
-    diagnostics = []
-    for sol in solutions:
-        rep = check_trajectory(sol, DEFAULT_BOUNDS)
-        diagnostics.append({"report": rep, "exit_idx": first_exit_index(sol, DEFAULT_BOUNDS)})
+    result = run_scenario(
+        scenario_cfg=scenario,
+        par=DEFAULT_PARAMS,
+        bounds=DEFAULT_BOUNDS,
+        x0_center=x0_center,
+        n_traj=args.n_traj,
+        t_span=tuple(DEFAULT_SIM["t_span"]),
+        n_eval=DEFAULT_SIM["n_eval"],
+        rng_seed=DEFAULT_SIM["rng_seed"],
+        noise_scale=noise_scale,
+        initial_conditions=initial_conditions,
+    )
 
-    viable_total = sum(d["report"].viable for d in diagnostics)
-
-    n_time = min(len(solutions[0].t), args.max_frames)
-    output_path = Path(args.output) if args.output else default_output_path(label, args.show_box)
+    solutions = result["solutions"]
+    initial_conditions = result["initial_conditions"]
+    label = result["label"]
+    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(8.8, 6.9), constrained_layout=True)
+    n_time = min(len(solutions[0].t), args.max_frames)
+
+    fig = plt.figure(figsize=(8.6, 7.0), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
 
-    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.12)
-    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.12)
-    O_max_axis = 1.1
+    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.08)
+    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.08)
+    O_max_axis = 1.4
 
     ax.set_xlim(0, E_max_axis)
     ax.set_ylim(0, T_max_axis)
@@ -217,84 +155,67 @@ def main() -> None:
     ax.set_ylabel("Cytoskeletal tension T")
     ax.set_zlabel("Oxygen O")
     ax.view_init(elev=args.elev, azim=args.azim)
-    ax.grid(True, alpha=0.20)
+    ax.grid(True, alpha=0.25)
 
     if args.show_box:
-        add_visible_box(ax, DEFAULT_BOUNDS, O_max_axis)
+        faces = viability_faces(
+            DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"],
+            DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
+            DEFAULT_BOUNDS["O_min"], O_max_axis,
+        )
+        box = Poly3DCollection(
+            faces,
+            facecolors=BOX_GREEN,
+            edgecolors=BOX_GREEN,
+            linewidths=0.8,
+            alpha=0.08,
+        )
+        ax.add_collection3d(box)
 
-    lines = [ax.plot([], [], [], lw=1.8, alpha=0.95, color=BLUE)[0] for _ in solutions]
-    points = [ax.plot([], [], [], "o", ms=4.4, color=BLUE, zorder=6)[0] for _ in solutions]
+    line_artists = []
+    point_artists = []
+    for sol, x0 in zip(solutions, initial_conditions):
+        color = INSIDE_COLOR if is_inside_viability_box(x0, DEFAULT_BOUNDS) else OUTSIDE_COLOR
+        line = ax.plot([], [], [], lw=1.4, alpha=0.75, color=color)[0]
+        point = ax.plot([], [], [], "o", ms=4.5, color=color)[0]
+        line_artists.append(line)
+        point_artists.append(point)
 
-    fig.suptitle(f"{label}\nAnimated ensemble in the 3D (E, T, O) phenotype space", fontsize=13, fontweight="bold")
-
-    viable_text = ax.text2D(
-        0.02, 0.98,
-        f"Viable trajectories: {viable_total}/{len(solutions)}",
-        transform=ax.transAxes, va="top", ha="left", fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.8", alpha=0.95),
+    ax.set_title(
+        f"{label}\nAnimated ensemble in 3D (E, T, O)",
+        fontsize=13,
+        fontweight="bold",
     )
-    frame_text = ax.text2D(
-        0.02, 0.90, "t = 0.00",
-        transform=ax.transAxes, va="top", ha="left", fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.85", alpha=0.90),
-    )
-    c_text = ax.text2D(
-        0.98, 0.06, f"C ({args.c_stat}) = 0.000",
-        transform=ax.transAxes, va="bottom", ha="right", fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.8", alpha=0.95),
-    )
 
-    focus_idx = max(0, min(args.focus_index, len(solutions) - 1))
-    exit_text = ax.text2D(
-        0.98, 0.14, "",
-        transform=ax.transAxes, va="bottom", ha="right", fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.8", alpha=0.95),
+    ax.text2D(
+        0.02,
+        0.98,
+        "Blue = starts inside box | Red = starts outside box",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.94),
     )
 
     def init():
-        for line, point in zip(lines, points):
+        for line, point in zip(line_artists, point_artists):
             line.set_data([], [])
             line.set_3d_properties([])
-            line.set_color(BLUE)
             point.set_data([], [])
             point.set_3d_properties([])
-            point.set_color(BLUE)
-        frame_text.set_text("t = 0.00")
-        c_text.set_text(f"C ({args.c_stat}) = 0.000")
-        exit_text.set_text("")
-        return [*lines, *points, viable_text, frame_text, c_text, exit_text]
+        return [*line_artists, *point_artists]
 
     def update(frame: int):
-        t_now = solutions[0].t[frame]
-        c_now = np.array([sol.y[0][frame] for sol in solutions], dtype=float)
-        c_val = aggregate(c_now, args.c_stat)
-
-        for sol, line, point, diag in zip(solutions, lines, points, diagnostics):
-            E = sol.y[2][: frame + 1]
-            T = sol.y[1][: frame + 1]
-            O = sol.y[3][: frame + 1]
-            line.set_data(E, T)
-            line.set_3d_properties(O)
-            point.set_data([E[-1]], [T[-1]])
-            point.set_3d_properties([O[-1]])
-
-            exit_idx = diag["exit_idx"]
-            current_color = BLUE if exit_idx is None or frame < exit_idx else RED
-            line.set_color(current_color)
-            point.set_color(current_color)
-
-        rep = diagnostics[focus_idx]["report"]
-        exit_idx = diagnostics[focus_idx]["exit_idx"]
-        if rep.viable or exit_idx is None or frame < exit_idx:
-            exit_msg = f"traj {focus_idx}: viable so far"
-        else:
-            vars_txt = ",".join(rep.violated_vars) if rep.violated_vars else "?"
-            exit_msg = f"traj {focus_idx}: exit at t={rep.first_exit_time:.2f} via {vars_txt}"
-
-        frame_text.set_text(f"t = {t_now:.2f}")
-        c_text.set_text(f"C ({args.c_stat}) = {c_val:.3f}")
-        exit_text.set_text(exit_msg)
-        return [*lines, *points, viable_text, frame_text, c_text, exit_text]
+        for sol, line, point in zip(solutions, line_artists, point_artists):
+            E_traj = sol.y[2][: frame + 1]
+            T_traj = sol.y[1][: frame + 1]
+            O_traj = sol.y[3][: frame + 1]
+            line.set_data(E_traj, T_traj)
+            line.set_3d_properties(O_traj)
+            point.set_data([E_traj[-1]], [T_traj[-1]])
+            point.set_3d_properties([O_traj[-1]])
+        return [*line_artists, *point_artists]
 
     anim = FuncAnimation(
         fig,
@@ -302,14 +223,15 @@ def main() -> None:
         init_func=init,
         frames=n_time,
         interval=1000 / max(args.fps, 1),
-        blit=False,
+        blit=True,
     )
-    anim.save(output_path, writer=PillowWriter(fps=args.fps))
+
+    writer = PillowWriter(fps=args.fps)
+    anim.save(output_path, writer=writer)
     plt.close(fig)
 
     print(f"Scenario: {label}")
     print(f"Saved GIF: {output_path}")
-    print(f"Viable trajectories: {viable_total}/{len(solutions)}")
 
 
 if __name__ == "__main__":
