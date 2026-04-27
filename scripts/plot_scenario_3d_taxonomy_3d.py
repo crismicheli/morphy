@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM, SCENARIOS
+from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
 from viabilitykernels.simulation import run_scenario
 from morphy.classifiers.taxonomy_classifier import STATE_COLORS, classify_solutions
 
@@ -26,19 +26,67 @@ BOX_GREEN = "#4dac26"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Plot converged final states in 3D (E,T,O) space using a posteriori state taxonomy.")
-    p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
-    p.add_argument("--output", default=str(ROOT / "figures" / "taxonomy_final_state_3d.png"), help="Output figure path.")
-    p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
-    p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
-    p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
-    p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
-    p.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
-    p.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
-    p.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
-    p.add_argument("--window", type=int, default=40, help="Terminal sample window used to estimate final state and local derivatives.")
+    p = argparse.ArgumentParser(
+        description="Plot converged final states in 3D (E,T,O) space using a posteriori state taxonomy."
+    )
+    p.add_argument(
+        "--filter",
+        default="Intermediate porosity",
+        help="Substring used to choose a scenario label.",
+    )
+    p.add_argument(
+        "--output",
+        default=str(REPO_ROOT / "figures" / "taxonomy_final_state_3d.png"),
+        help="Output figure path.",
+    )
+    p.add_argument(
+        "--n-traj",
+        type=int,
+        default=DEFAULT_SIM["n_traj"],
+        help="Number of trajectories.",
+    )
+    p.add_argument(
+        "--shift-T",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to initial T center.",
+    )
+    p.add_argument(
+        "--shift-E",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to initial E center.",
+    )
+    p.add_argument(
+        "--shift-O",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to initial O center.",
+    )
+    p.add_argument(
+        "--elev",
+        type=float,
+        default=24.0,
+        help="3D camera elevation.",
+    )
+    p.add_argument(
+        "--azim",
+        type=float,
+        default=-58.0,
+        help="3D camera azimuth.",
+    )
+    p.add_argument(
+        "--show-box",
+        action="store_true",
+        help="Show translucent ETO viability box.",
+    )
+    p.add_argument(
+        "--window",
+        type=int,
+        default=40,
+        help="Terminal sample window used to estimate final state and local derivatives.",
+    )
     return p.parse_args()
-
 
 def choose_scenario(keyword: str) -> dict:
     matches = [s for s in SCENARIOS if keyword.lower() in s["label"].lower()]
