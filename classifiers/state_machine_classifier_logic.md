@@ -280,6 +280,18 @@ The revised classifier should be interpreted as a rule-driven controller on top 
 - state-environment agreement increases persistence in the current state;
 - scenario context shapes how fast these tendencies accumulate.
 
+
+
+## Transition logic in words
+
+State transitions follow a deterministic biological logic rather than an arbitrary graph. `Undetermined` functions as a buffer for ambiguous or boundary-near cases, `Apoptosis` acts as a sticky failure sink that can only recover through `Undetermined`, and the viable active states (`Quiescence`, `Migration`, `Proliferation`, `Diversification`) interconvert according to changes in dynamical regime such as recovery, motility, growth, or remodeling. Hysteresis and persistence rules prevent abrupt switching, while additional deterministic biases tilt transitions toward stable, stressed, or recovery-driven directions depending on recent trajectory context.
+
+## Transition figure
+
+![Deterministic state transitions](state_machine.png)
+
+
+
 ## Main conceptual difference from the temporal classifier
 
 The temporal classifier answers: “given the current evidence and recent history, which label should be emitted?”
