@@ -64,7 +64,17 @@ def _inside_viability(C: float, T: float, E: float, O: float, bounds: dict) -> b
     )
 
 
-def _recovery_score(C: float, T: float, E: float, O: float, dC: float, dT: float, dE: float, dO: float, bounds: dict) -> float:
+def _recovery_score(
+    C: float,
+    T: float,
+    E: float,
+    O: float,
+    dC: float,
+    dT: float,
+    dE: float,
+    dO: float,
+    bounds: dict,
+) -> float:
     score = 0.0
     if C < bounds["C_min"] and dC > 0:
         score += 1.0
@@ -79,6 +89,66 @@ def _recovery_score(C: float, T: float, E: float, O: float, dC: float, dT: float
     if O < bounds["O_min"] and dO > 0:
         score += 1.0
     return score
+
+
+def _secondary_parameter_modifiers(
+    par: Optional[dict],
+    scenario_cfg: Optional[dict],
+) -> Dict[str, float]:
+    p = _safe_get(scenario_cfg, "p", 0.0)
+
+    adhesion = _safe_get(par, "adhesion", _safe_get(par, "alpha", 1.0))
+    motility_gain = _safe_get(par, "motility", _safe_get(par, "m", 1.0))
+    growth_gain = _safe_get(par, "growth", _safe_get(par, "g", 1.0))
+    oxygen_gain = _safe_get(par, "oxygen", _safe_get(par, "o", 1.0))
+    remodeling_gain = _safe_get(par, "remodeling", _safe_get(par, "r", 1.0))
+    stress_gain = _safe_get(par, "stress", _safe_get(par, "s", 1.0))
+
+    expected = "" if scenario_cfg is None else str(scenario_cfg.get("expected", "")).lower()
+
+    modifiers = {
+        "Apoptosis": 1.0,
+        "Migration": 1.0,
+        "Proliferation": 1.0,
+        "Quiescence": 1.0,
+        "Diversification": 1.0,
+        "Undetermined": 1.0,
+    }
+
+    modifiers["Migration"] *= 1.0 + 0.12 * max(0.0, motility_gain - 1.0)
+    modifiers["Migration"] *= 1.0 + 0.08 * max(0.0, p)
+
+    modifiers["Proliferation"] *= 1.0 + 0.14 * max(0.0, growth_gain - 1.0)
+    modifiers["Proliferation"] *= 1.0 + 0.08 * max(0.0, oxygen_gain - 1.0)
+    modifiers["Proliferation"] *= 1.0 + 0.06 * max(0.0, adhesion - 1.0)
+
+    modifiers["Quiescence"] *= 1.0 + 0.10 * max(0.0, adhesion - 1.0)
+    modifiers["Quiescence"] *= 1.0 - 0.06 * max(0.0, motility_gain - 1.0)
+
+    modifiers["Diversification"] *= 1.0 + 0.14 * max(0.0, remodeling_gain - 1.0)
+    modifiers["Diversification"] *= 1.0 + 0.06 * max(0.0, p)
+
+    modifiers["Apoptosis"] *= 1.0 + 0.16 * max(0.0, stress_gain - 1.0)
+    modifiers["Apoptosis"] *= 1.0 - 0.06 * max(0.0, oxygen_gain - 1.0)
+
+    if expected == "unstable":
+        modifiers["Apoptosis"] *= 1.18
+        modifiers["Undetermined"] *= 1.08
+        modifiers["Quiescence"] *= 0.94
+        modifiers["Proliferation"] *= 0.95
+    elif expected in {"boundary", "borderline"}:
+        modifiers["Undetermined"] *= 1.15
+        modifiers["Diversification"] *= 1.05
+        modifiers["Apoptosis"] *= 1.04
+    elif expected == "stable":
+        modifiers["Quiescence"] *= 1.10
+        modifiers["Proliferation"] *= 1.08
+        modifiers["Apoptosis"] *= 0.92
+
+    for key, value in modifiers.items():
+        modifiers[key] = max(0.65, min(1.5, value))
+
+    return modifiers
 
 
 def _instantaneous_scores(
@@ -141,11 +211,11 @@ def _instantaneous_scores(
     quiescent_dynamics = math.exp(-2.5 * (abs(dC) + abs(dT) + abs(dE) + abs(dO)))
     if inside:
         scores["Quiescence"] += 1.8 * quiescent_dynamics
-        scores["Quiescence"] += 0.9 * max(0.0, 1.0 - abs(T - T_mid) / (0.5 * T_span + EPS))
+    scores["Quiescence"] += 0.9 * max(0.0, 1.0 - abs(T - T_mid) / (0.5 * T_span + EPS))
     if abs(dC) < 0.03 and abs(dT) < 0.03 and abs(dE) < 0.03 and abs(dO) < 0.03:
         scores["Quiescence"] += 1.5
 
-    remodeling = max(0.0, abs(dE)) + 0.6 * max(0.0, abs(dT))
+    remodeling = abs(dE) + 0.6 * abs(dT)
     if inside and E >= E_mid and O >= O_min:
         scores["Diversification"] += 1.5 + remodeling
     if dE > 0 and abs(dT) > 0.03:
@@ -156,6 +226,10 @@ def _instantaneous_scores(
         scores["Undetermined"] += 1.5
     if sum(v > 2.0 for k, v in scores.items() if k != "Undetermined") == 0:
         scores["Undetermined"] += 1.0
+
+    modifiers = _secondary_parameter_modifiers(par, scenario_cfg)
+    for label in STATE_ORDER:
+        scores[label] *= modifiers[label]
 
     return scores
 
@@ -173,20 +247,6 @@ def classify_state(
     par: Optional[dict] = None,
     scenario_cfg: Optional[dict] = None,
 ) -> str:
-    """Temporal, trajectory-aware taxonomy classifier.
-
-    Same inputs/outputs as the current classifier, while adding four temporal rules:
-    1. Raw instantaneous biological rules are preserved through per-class scores.
-    2. A grace period prevents immediate apoptosis assignment for starting points outside viability.
-    3. Transition hysteresis requires persistence before changing state.
-    4. Apoptosis is sticky and requires recovery evidence before leaving.
-
-    Notes
-    -----
-    This implementation keeps memory keyed by scenario/parameter signature. To start a new
-    trajectory or batch, call ``reset_classifier_memory()`` before classifying the first point.
-    The function returns one of the taxonomy labels as a plain string, matching the existing API.
-    """
     key = _infer_signature(par, scenario_cfg)
     mem = _TEMPORAL_CACHE[key]
 
