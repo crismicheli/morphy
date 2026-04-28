@@ -76,7 +76,7 @@ The order matters. Earlier rules may alter the candidate label before later rule
 
 ## Transition states
 
-[!image](state_machine_v2.png)  
+![image](state_machine_v2.png)  
 
 
 ## Allowed transition map
