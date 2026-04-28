@@ -10,7 +10,7 @@ The classifier stack is:
 
 ## State Machine logic   
 
-
+![image](state_machine_logic.png)
 
 
 ## Core principle
