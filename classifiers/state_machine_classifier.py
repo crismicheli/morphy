@@ -110,6 +110,113 @@ def _allowed_transitions() -> Dict[str, set]:
     }
 
 
+def _update_streaks(
+    mem: StateMachineMemory,
+    static_label: str,
+    temporal_label: str,
+    inside: bool,
+    recovery: float,
+) -> None:
+    if inside:
+        mem.inside_viability_count += 1
+        mem.outside_viability_count = 0
+    else:
+        mem.outside_viability_count += 1
+        mem.inside_viability_count = 0
+
+    if inside and recovery >= 2.0:
+        mem.recovery_streak += 1
+    else:
+        mem.recovery_streak = 0
+
+    if (not inside) and recovery == 0.0:
+        mem.stress_streak += 1
+    else:
+        mem.stress_streak = 0
+
+    if temporal_label == "Undetermined" and static_label == "Undetermined":
+        mem.ambiguity_streak += 1
+    else:
+        mem.ambiguity_streak = 0
+
+
+def _ambiguity_persistence_rule(
+    candidate: str,
+    mem: StateMachineMemory,
+    ambiguity_window: int,
+) -> str:
+    if mem.ambiguity_streak >= ambiguity_window:
+        return "Undetermined"
+    return candidate
+
+
+def _stress_lock_rule(
+    candidate: str,
+    temporal_label: str,
+    inside: bool,
+    mem: StateMachineMemory,
+    stress_lock_steps: int,
+) -> str:
+    if mem.stress_streak >= stress_lock_steps and not inside:
+        if temporal_label in {"Apoptosis", "Undetermined"}:
+            return "Apoptosis"
+    return candidate
+
+
+def _recovery_unlock_rule(
+    candidate: str,
+    temporal_label: str,
+    mem: StateMachineMemory,
+    recovery_lock_steps: int,
+) -> str:
+    if mem.recovery_streak >= recovery_lock_steps:
+        if candidate == "Apoptosis":
+            return "Undetermined"
+        if candidate == "Undetermined" and temporal_label in {"Quiescence", "Proliferation"}:
+            return temporal_label
+    return candidate
+
+
+def _allowed_transition_rule(
+    candidate: str,
+    previous: str,
+) -> str:
+    allowed = _allowed_transitions()
+    if candidate not in allowed.get(previous, set(STATE_ORDER)):
+        return previous
+    return candidate
+
+
+def _switch_persistence_rule(
+    candidate: str,
+    previous: str,
+    mem: StateMachineMemory,
+    switch_persistence_steps: int,
+) -> str:
+    if candidate == previous:
+        return candidate
+    recent_match = sum(1 for x in mem.history if x == candidate)
+    if recent_match >= switch_persistence_steps - 1:
+        return candidate
+    return previous if previous != "Undetermined" else candidate
+
+
+def _sustained_apoptosis_retention_rule(
+    candidate: str,
+    previous: str,
+    inside: bool,
+    recovery: float,
+    mem: StateMachineMemory,
+    recovery_lock_steps: int,
+) -> str:
+    if previous == "Apoptosis":
+        if not inside or recovery < 2.0:
+            return "Apoptosis"
+        if mem.recovery_streak >= recovery_lock_steps:
+            return "Undetermined"
+    return candidate
+
+
 def classify_state(
     C: float,
     T: float,
@@ -131,14 +238,14 @@ def classify_state(
     state_recovery_lock_steps: int = 2,
     state_stress_lock_steps: int = 2,
 ) -> str:
-    """Three-layer classifier.
+    """Three-layer state machine classifier with explicit transition rules.
 
-    Layer 1: static taxonomy classifier defines instantaneous label semantics.
-    Layer 2: temporal classifier stabilizes short-term label changes.
-    Layer 3: this state machine adds higher-level regime persistence rules.
+    Layer 1: static classifier defines instantaneous label semantics.
+    Layer 2: temporal classifier stabilizes short-term transitions.
+    Layer 3: this state machine applies explicit regime-level transition rules.
 
-    This layer does not redefine taxonomy rules. It only operates on the labels
-    emitted by the lower layers, plus viability-membership and recovery helpers.
+    This layer does not use score biases. It operates on inherited labels and
+    clearly named transition rules only.
     """
     key = _infer_signature(par, scenario_cfg)
     mem = _STATE_MACHINE_CACHE[key]
@@ -163,64 +270,24 @@ def classify_state(
     inside = _inside_viability(C, T, E, O, bounds)
     recovery = _recovery_score(C, T, E, O, dC, dT, dE, dO, bounds)
 
-    if inside:
-        mem.inside_viability_count += 1
-        mem.outside_viability_count = 0
-    else:
-        mem.outside_viability_count += 1
-        mem.inside_viability_count = 0
-
-    if inside and recovery >= 2.0:
-        mem.recovery_streak += 1
-    else:
-        mem.recovery_streak = 0
-
-    if (not inside) and recovery == 0.0:
-        mem.stress_streak += 1
-    else:
-        mem.stress_streak = 0
-
-    if temporal_label == "Undetermined" and static_label == "Undetermined":
-        mem.ambiguity_streak += 1
-    else:
-        mem.ambiguity_streak = 0
+    _update_streaks(mem, static_label, temporal_label, inside, recovery)
 
     candidate = temporal_label
+    candidate = _ambiguity_persistence_rule(candidate, mem, state_ambiguity_window)
+    candidate = _stress_lock_rule(candidate, temporal_label, inside, mem, state_stress_lock_steps)
+    candidate = _recovery_unlock_rule(candidate, temporal_label, mem, state_recovery_lock_steps)
+    candidate = _allowed_transition_rule(candidate, mem.last_state_machine_label)
+    candidate = _switch_persistence_rule(candidate, mem.last_state_machine_label, mem, state_switch_persistence_steps)
+    final = _sustained_apoptosis_retention_rule(
+        candidate,
+        mem.last_state_machine_label,
+        inside,
+        recovery,
+        mem,
+        state_recovery_lock_steps,
+    )
 
-    if mem.ambiguity_streak >= state_ambiguity_window:
-        candidate = "Undetermined"
-
-    if mem.stress_streak >= state_stress_lock_steps and not inside:
-        if temporal_label in {"Apoptosis", "Undetermined"}:
-            candidate = "Apoptosis"
-
-    if mem.recovery_streak >= state_recovery_lock_steps:
-        if candidate == "Apoptosis":
-            candidate = "Undetermined"
-        elif candidate == "Undetermined" and temporal_label in {"Quiescence", "Proliferation"}:
-            candidate = temporal_label
-
-    allowed = _allowed_transitions()
-    previous = mem.last_state_machine_label
-    if candidate not in allowed.get(previous, set(STATE_ORDER)):
-        candidate = previous
-
-    if candidate == previous:
-        final = candidate
-    else:
-        recent_match = sum(1 for x in mem.history if x == candidate)
-        if recent_match >= state_switch_persistence_steps - 1:
-            final = candidate
-        else:
-            final = previous if previous != "Undetermined" else candidate
-
-    if previous == "Apoptosis":
-        if not inside or recovery < 2.0:
-            final = "Apoptosis"
-        elif mem.recovery_streak >= state_recovery_lock_steps:
-            final = "Undetermined"
-
-    if final == previous:
+    if final == mem.last_state_machine_label:
         mem.dwell_count += 1
     else:
         mem.dwell_count = 1
