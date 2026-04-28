@@ -1,54 +1,47 @@
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Optional, Tuple
-import math
+from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
-STATE_COLORS = {
-    "Apoptosis": "#111111",
-    "Migration": "#00B7FF",
-    "Proliferation": "#FF7A00",
-    "Quiescence": "#2ECC40",
-    "Diversification": "#8E44AD",
-    "Undetermined": "#FFD400",
-}
+import numpy as np
+
+from taxonomy_classifier import classify_state as classify_static_state
+from taxonomy_classifier import STATE_COLORS
+from temporal_taxonomy_classifier_explicit import classify_state as classify_temporal_state
+
 
 STATE_ORDER = (
     "Apoptosis",
-    "Migration",
     "Proliferation",
+    "Migration",
     "Quiescence",
     "Diversification",
     "Undetermined",
 )
 
-EPS = 1e-12
-
 
 @dataclass
-class _StateMemory:
-    last_label: str = "Undetermined"
+class StateMachineMemory:
+    last_state_machine_label: str = "Undetermined"
+    last_temporal_label: str = "Undetermined"
+    last_static_label: str = "Undetermined"
     dwell_count: int = 0
-    outside_count: int = 0
-    inside_count: int = 0
-    history: Deque[str] = field(default_factory=lambda: deque(maxlen=8))
+    history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
+    temporal_history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
+    static_history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
+    outside_viability_count: int = 0
+    inside_viability_count: int = 0
     recovery_streak: int = 0
     stress_streak: int = 0
     ambiguity_streak: int = 0
 
 
-_STATE_CACHE: Dict[Tuple[int, int], _StateMemory] = defaultdict(_StateMemory)
+_STATE_MACHINE_CACHE: Dict[Tuple[int, int], StateMachineMemory] = defaultdict(StateMachineMemory)
 
 
 def reset_classifier_memory() -> None:
-    _STATE_CACHE.clear()
-
-
-def _safe_get(d: Optional[dict], key: str, default: float) -> float:
-    if d is None:
-        return float(default)
-    return float(d.get(key, default))
+    _STATE_MACHINE_CACHE.clear()
 
 
 def _infer_signature(par: Optional[dict], scenario_cfg: Optional[dict]) -> Tuple[int, int]:
@@ -94,194 +87,27 @@ def _recovery_score(
     return score
 
 
-def _secondary_parameter_modifiers(par: Optional[dict], scenario_cfg: Optional[dict]) -> Dict[str, float]:
-    p = _safe_get(scenario_cfg, "p", 0.0)
-    adhesion = _safe_get(par, "adhesion", _safe_get(par, "alpha", 1.0))
-    motility_gain = _safe_get(par, "motility", _safe_get(par, "m", 1.0))
-    growth_gain = _safe_get(par, "growth", _safe_get(par, "g", 1.0))
-    oxygen_gain = _safe_get(par, "oxygen", _safe_get(par, "o", 1.0))
-    remodeling_gain = _safe_get(par, "remodeling", _safe_get(par, "r", 1.0))
-    stress_gain = _safe_get(par, "stress", _safe_get(par, "s", 1.0))
-    expected = "" if scenario_cfg is None else str(scenario_cfg.get("expected", "")).lower()
-
-    modifiers = {k: 1.0 for k in STATE_ORDER}
-    modifiers["Migration"] *= 1.0 + 0.12 * max(0.0, motility_gain - 1.0)
-    modifiers["Migration"] *= 1.0 + 0.08 * max(0.0, p)
-    modifiers["Proliferation"] *= 1.0 + 0.14 * max(0.0, growth_gain - 1.0)
-    modifiers["Proliferation"] *= 1.0 + 0.08 * max(0.0, oxygen_gain - 1.0)
-    modifiers["Proliferation"] *= 1.0 + 0.06 * max(0.0, adhesion - 1.0)
-    modifiers["Quiescence"] *= 1.0 + 0.10 * max(0.0, adhesion - 1.0)
-    modifiers["Quiescence"] *= 1.0 - 0.06 * max(0.0, motility_gain - 1.0)
-    modifiers["Diversification"] *= 1.0 + 0.14 * max(0.0, remodeling_gain - 1.0)
-    modifiers["Diversification"] *= 1.0 + 0.06 * max(0.0, p)
-    modifiers["Apoptosis"] *= 1.0 + 0.16 * max(0.0, stress_gain - 1.0)
-    modifiers["Apoptosis"] *= 1.0 - 0.06 * max(0.0, oxygen_gain - 1.0)
-
-    if expected == "unstable":
-        modifiers["Apoptosis"] *= 1.18
-        modifiers["Undetermined"] *= 1.08
-        modifiers["Quiescence"] *= 0.94
-        modifiers["Proliferation"] *= 0.95
-    elif expected in {"boundary", "borderline"}:
-        modifiers["Undetermined"] *= 1.15
-        modifiers["Diversification"] *= 1.05
-        modifiers["Apoptosis"] *= 1.04
-    elif expected == "stable":
-        modifiers["Quiescence"] *= 1.10
-        modifiers["Proliferation"] *= 1.08
-        modifiers["Apoptosis"] *= 0.92
-
-    return {k: max(0.65, min(1.5, v)) for k, v in modifiers.items()}
-
-
-def _instantaneous_scores(
-    C: float,
-    T: float,
-    E: float,
-    O: float,
-    dC: float,
-    dT: float,
-    dE: float,
-    dO: float,
-    bounds: dict,
-    par: Optional[dict],
-    scenario_cfg: Optional[dict],
-) -> Dict[str, float]:
-    scores = {k: 0.0 for k in STATE_ORDER}
-
-    C_min = float(bounds["C_min"])
-    T_min = float(bounds["T_min"])
-    T_max = float(bounds["T_max"])
-    E_min = float(bounds["E_min"])
-    E_max = float(bounds["E_max"])
-    O_min = float(bounds["O_min"])
-
-    T_mid = 0.5 * (T_min + T_max)
-    T_span = max(EPS, T_max - T_min)
-    E_mid = 0.5 * (E_min + E_max)
-    E_span = max(EPS, E_max - E_min)
-
-    inside = _inside_viability(C, T, E, O, bounds)
-    low_C = max(0.0, (C_min - C) / max(C_min, EPS))
-    low_O = max(0.0, (O_min - O) / max(O_min, EPS))
-    low_T = max(0.0, (T_min - T) / max(T_min, EPS))
-    high_T = max(0.0, (T - T_max) / max(T_max, EPS))
-    low_E = max(0.0, (E_min - E) / max(E_min, EPS))
-    high_E = max(0.0, (E - E_max) / max(E_max, EPS))
-
-    stress = low_C + low_O + low_T + high_T + low_E + high_E
-    scores["Apoptosis"] += 3.0 * stress
-    if dC < 0:
-        scores["Apoptosis"] += 0.8 * abs(dC)
-    if dO < 0:
-        scores["Apoptosis"] += 0.8 * abs(dO)
-    if not inside:
-        scores["Apoptosis"] += 1.0
-
-    motility = max(0.0, dT) + max(0.0, dE) + 0.5 * max(0.0, dC)
-    if T >= T_mid and O >= O_min and C >= C_min:
-        scores["Migration"] += 2.0 + motility
-    scores["Migration"] += 0.8 * max(0.0, (T - T_mid) / T_span)
-    scores["Migration"] += 0.6 * max(0.0, dE)
-
-    growth = max(0.0, dC) + max(0.0, dE) + max(0.0, dO)
-    if inside and O >= O_min and C >= C_min and T_min <= T <= T_max:
-        scores["Proliferation"] += 2.0 + growth
-    scores["Proliferation"] += 0.8 * max(0.0, 1.0 - abs(T - T_mid) / (0.5 * T_span + EPS))
-    scores["Proliferation"] += 0.5 * max(0.0, 1.0 - abs(E - E_mid) / (0.5 * E_span + EPS))
-
-    quiescent_dynamics = math.exp(-2.5 * (abs(dC) + abs(dT) + abs(dE) + abs(dO)))
-    if inside:
-        scores["Quiescence"] += 1.8 * quiescent_dynamics
-    scores["Quiescence"] += 0.9 * max(0.0, 1.0 - abs(T - T_mid) / (0.5 * T_span + EPS))
-    if abs(dC) < 0.03 and abs(dT) < 0.03 and abs(dE) < 0.03 and abs(dO) < 0.03:
-        scores["Quiescence"] += 1.5
-
-    remodeling = abs(dE) + 0.6 * abs(dT)
-    if inside and E >= E_mid and O >= O_min:
-        scores["Diversification"] += 1.5 + remodeling
-    if dE > 0 and abs(dT) > 0.03:
-        scores["Diversification"] += 0.8
-
-    scores["Undetermined"] += 0.5
-    if not inside:
-        scores["Undetermined"] += 1.5
-    if sum(v > 2.0 for k, v in scores.items() if k != "Undetermined") == 0:
-        scores["Undetermined"] += 1.0
-
-    modifiers = _secondary_parameter_modifiers(par, scenario_cfg)
+def _majority_label(labels: List[str]) -> str:
+    if not labels:
+        return "Undetermined"
+    counts = Counter(labels)
+    best_n = max(counts.values())
+    tied = {label for label, n in counts.items() if n == best_n}
     for label in STATE_ORDER:
-        scores[label] *= modifiers[label]
-    return scores
+        if label in tied:
+            return label
+    return "Undetermined"
 
 
-def _top_gap(scores: Dict[str, float]) -> float:
-    vals = sorted(scores.values(), reverse=True)
-    if len(vals) < 2:
-        return 0.0
-    return vals[0] - vals[1]
-
-
-def _deterministic_biases(
-    mem: _StateMemory,
-    scores: Dict[str, float],
-    inside: bool,
-    recovery: float,
-    par: Optional[dict],
-    scenario_cfg: Optional[dict],
-) -> Dict[str, float]:
-    biases = {k: 0.0 for k in STATE_ORDER}
-    expected = "" if scenario_cfg is None else str(scenario_cfg.get("expected", "")).lower()
-    motility_gain = _safe_get(par, "motility", _safe_get(par, "m", 1.0))
-    growth_gain = _safe_get(par, "growth", _safe_get(par, "g", 1.0))
-    remodeling_gain = _safe_get(par, "remodeling", _safe_get(par, "r", 1.0))
-
-    gap = _top_gap(scores)
-    if gap < 0.35:
-        biases["Undetermined"] += 0.9
-        mem.ambiguity_streak += 1
-    else:
-        mem.ambiguity_streak = 0
-
-    if mem.ambiguity_streak >= 2:
-        biases["Undetermined"] += 0.8
-
-    if inside and recovery >= 2.0:
-        mem.recovery_streak += 1
-    else:
-        mem.recovery_streak = 0
-
-    if (not inside) and recovery == 0.0:
-        mem.stress_streak += 1
-    else:
-        mem.stress_streak = 0
-
-    if mem.recovery_streak >= 2:
-        biases["Quiescence"] += 0.5
-        biases["Proliferation"] += 0.5
-        biases["Apoptosis"] -= 0.6
-
-    if mem.stress_streak >= 2:
-        biases["Apoptosis"] += 1.0
-        biases["Undetermined"] += 0.3
-
-    if mem.last_label == "Migration" and motility_gain > 1.05:
-        biases["Migration"] += 0.45
-    if mem.last_label == "Proliferation" and growth_gain > 1.05:
-        biases["Proliferation"] += 0.45
-    if mem.last_label == "Diversification" and remodeling_gain > 1.05:
-        biases["Diversification"] += 0.45
-
-    if expected == "unstable" and mem.outside_count >= 2:
-        biases["Apoptosis"] += 0.5
-    if expected in {"boundary", "borderline"} and gap < 0.5:
-        biases["Undetermined"] += 0.5
-        biases["Diversification"] += 0.2
-    if expected == "stable" and inside and mem.inside_count >= 3:
-        biases["Quiescence"] += 0.4
-        biases["Proliferation"] += 0.3
-
-    return biases
+def _allowed_transitions() -> Dict[str, set]:
+    return {
+        "Undetermined": set(STATE_ORDER),
+        "Quiescence": {"Quiescence", "Migration", "Proliferation", "Diversification", "Undetermined", "Apoptosis"},
+        "Migration": {"Migration", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
+        "Proliferation": {"Proliferation", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
+        "Diversification": {"Diversification", "Migration", "Proliferation", "Quiescence", "Undetermined", "Apoptosis"},
+        "Apoptosis": {"Apoptosis", "Undetermined"},
+    }
 
 
 def classify_state(
@@ -296,74 +122,197 @@ def classify_state(
     bounds: dict,
     par: Optional[dict] = None,
     scenario_cfg: Optional[dict] = None,
+    *,
+    temporal_grace_outside_steps: int = 2,
+    temporal_apoptosis_persistence_steps: int = 3,
+    temporal_switch_persistence_steps: int = 2,
+    state_switch_persistence_steps: int = 2,
+    state_ambiguity_window: int = 2,
+    state_recovery_lock_steps: int = 2,
+    state_stress_lock_steps: int = 2,
 ) -> str:
+    """Three-layer classifier.
+
+    Layer 1: static taxonomy classifier defines instantaneous label semantics.
+    Layer 2: temporal classifier stabilizes short-term label changes.
+    Layer 3: this state machine adds higher-level regime persistence rules.
+
+    This layer does not redefine taxonomy rules. It only operates on the labels
+    emitted by the lower layers, plus viability-membership and recovery helpers.
+    """
     key = _infer_signature(par, scenario_cfg)
-    mem = _STATE_CACHE[key]
+    mem = _STATE_MACHINE_CACHE[key]
+
+    static_label = classify_static_state(
+        C, T, E, O, dC, dT, dE, dO,
+        bounds=bounds,
+        par=par,
+        scenario_cfg=scenario_cfg,
+    )
+
+    temporal_label = classify_temporal_state(
+        C, T, E, O, dC, dT, dE, dO,
+        bounds=bounds,
+        par=par,
+        scenario_cfg=scenario_cfg,
+        grace_outside_steps=temporal_grace_outside_steps,
+        apoptosis_persistence_steps=temporal_apoptosis_persistence_steps,
+        switch_persistence_steps=temporal_switch_persistence_steps,
+    )
 
     inside = _inside_viability(C, T, E, O, bounds)
     recovery = _recovery_score(C, T, E, O, dC, dT, dE, dO, bounds)
 
     if inside:
-        mem.inside_count += 1
-        mem.outside_count = 0
+        mem.inside_viability_count += 1
+        mem.outside_viability_count = 0
     else:
-        mem.outside_count += 1
-        mem.inside_count = 0
+        mem.outside_viability_count += 1
+        mem.inside_viability_count = 0
 
-    scores = _instantaneous_scores(C, T, E, O, dC, dT, dE, dO, bounds, par, scenario_cfg)
-    biases = _deterministic_biases(mem, scores, inside, recovery, par, scenario_cfg)
-    for label in STATE_ORDER:
-        scores[label] += biases[label]
+    if inside and recovery >= 2.0:
+        mem.recovery_streak += 1
+    else:
+        mem.recovery_streak = 0
 
-    candidate = max(STATE_ORDER, key=lambda s: (scores[s], -STATE_ORDER.index(s)))
+    if (not inside) and recovery == 0.0:
+        mem.stress_streak += 1
+    else:
+        mem.stress_streak = 0
 
-    grace_steps = 3
-    apoptosis_persistence = 4
-    switch_persistence = 2
+    if temporal_label == "Undetermined" and static_label == "Undetermined":
+        mem.ambiguity_streak += 1
+    else:
+        mem.ambiguity_streak = 0
 
-    if not inside and mem.last_label == "Undetermined" and mem.dwell_count < grace_steps:
+    candidate = temporal_label
+
+    if mem.ambiguity_streak >= state_ambiguity_window:
         candidate = "Undetermined"
 
-    if not inside and mem.outside_count < grace_steps and recovery >= 1.0:
-        candidate = "Undetermined"
+    if mem.stress_streak >= state_stress_lock_steps and not inside:
+        if temporal_label in {"Apoptosis", "Undetermined"}:
+            candidate = "Apoptosis"
 
-    if candidate == "Apoptosis":
-        if inside:
-            candidate = mem.last_label if mem.last_label != "Apoptosis" else "Undetermined"
-        elif mem.outside_count < apoptosis_persistence and recovery > 0.0:
+    if mem.recovery_streak >= state_recovery_lock_steps:
+        if candidate == "Apoptosis":
             candidate = "Undetermined"
+        elif candidate == "Undetermined" and temporal_label in {"Quiescence", "Proliferation"}:
+            candidate = temporal_label
 
-    if mem.last_label == "Apoptosis":
-        if not inside or recovery < 2.0:
-            final = "Apoptosis"
-        else:
-            final = "Undetermined"
+    allowed = _allowed_transitions()
+    previous = mem.last_state_machine_label
+    if candidate not in allowed.get(previous, set(STATE_ORDER)):
+        candidate = previous
+
+    if candidate == previous:
+        final = candidate
     else:
-        allowed = {
-            "Undetermined": set(STATE_ORDER),
-            "Quiescence": {"Quiescence", "Migration", "Proliferation", "Diversification", "Undetermined", "Apoptosis"},
-            "Migration": {"Migration", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
-            "Proliferation": {"Proliferation", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
-            "Diversification": {"Diversification", "Migration", "Proliferation", "Quiescence", "Undetermined", "Apoptosis"},
-            "Apoptosis": {"Apoptosis", "Undetermined"},
-        }
-        if candidate not in allowed.get(mem.last_label, set(STATE_ORDER)):
-            candidate = mem.last_label
-
-        if candidate == mem.last_label:
+        recent_match = sum(1 for x in mem.history if x == candidate)
+        if recent_match >= state_switch_persistence_steps - 1:
             final = candidate
         else:
-            recent_match = sum(1 for x in mem.history if x == candidate)
-            if recent_match >= switch_persistence - 1:
-                final = candidate
-            else:
-                final = mem.last_label
+            final = previous if previous != "Undetermined" else candidate
 
-    if final == mem.last_label:
+    if previous == "Apoptosis":
+        if not inside or recovery < 2.0:
+            final = "Apoptosis"
+        elif mem.recovery_streak >= state_recovery_lock_steps:
+            final = "Undetermined"
+
+    if final == previous:
         mem.dwell_count += 1
     else:
         mem.dwell_count = 1
-    mem.last_label = final
-    mem.history.append(candidate)
+
+    mem.last_state_machine_label = final
+    mem.last_temporal_label = temporal_label
+    mem.last_static_label = static_label
+    mem.history.append(final)
+    mem.temporal_history.append(temporal_label)
+    mem.static_history.append(static_label)
 
     return final
+
+
+def classify_solution(
+    sol,
+    bounds: dict,
+    par: Optional[dict] = None,
+    scenario_cfg: Optional[dict] = None,
+    n_samples: int = 7,
+    *,
+    temporal_grace_outside_steps: int = 2,
+    temporal_apoptosis_persistence_steps: int = 3,
+    temporal_switch_persistence_steps: int = 2,
+    state_switch_persistence_steps: int = 2,
+    state_ambiguity_window: int = 2,
+    state_recovery_lock_steps: int = 2,
+    state_stress_lock_steps: int = 2,
+    reset_memory_before_run: bool = True,
+) -> str:
+    if reset_memory_before_run:
+        reset_classifier_memory()
+
+    t = sol.t
+    y = sol.y
+    dt = max(1e-12, float(np.mean(np.diff(t))))
+    dydt = np.gradient(y, dt, axis=1)
+
+    idx = np.linspace(0, y.shape[1] - 1, num=min(n_samples, y.shape[1]), dtype=int)
+    labels: List[str] = []
+    for i in idx:
+        C, T, E, O = [float(v) for v in y[:, i]]
+        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
+        labels.append(
+            classify_state(
+                C, T, E, O, dC, dT, dE, dO,
+                bounds=bounds,
+                par=par,
+                scenario_cfg=scenario_cfg,
+                temporal_grace_outside_steps=temporal_grace_outside_steps,
+                temporal_apoptosis_persistence_steps=temporal_apoptosis_persistence_steps,
+                temporal_switch_persistence_steps=temporal_switch_persistence_steps,
+                state_switch_persistence_steps=state_switch_persistence_steps,
+                state_ambiguity_window=state_ambiguity_window,
+                state_recovery_lock_steps=state_recovery_lock_steps,
+                state_stress_lock_steps=state_stress_lock_steps,
+            )
+        )
+
+    return _majority_label(labels)
+
+
+def classify_solutions(
+    solutions: Iterable,
+    bounds: dict,
+    par: Optional[dict] = None,
+    scenario_cfg: Optional[dict] = None,
+    n_samples: int = 7,
+    *,
+    temporal_grace_outside_steps: int = 2,
+    temporal_apoptosis_persistence_steps: int = 3,
+    temporal_switch_persistence_steps: int = 2,
+    state_switch_persistence_steps: int = 2,
+    state_ambiguity_window: int = 2,
+    state_recovery_lock_steps: int = 2,
+    state_stress_lock_steps: int = 2,
+) -> List[str]:
+    return [
+        classify_solution(
+            sol,
+            bounds=bounds,
+            par=par,
+            scenario_cfg=scenario_cfg,
+            n_samples=n_samples,
+            temporal_grace_outside_steps=temporal_grace_outside_steps,
+            temporal_apoptosis_persistence_steps=temporal_apoptosis_persistence_steps,
+            temporal_switch_persistence_steps=temporal_switch_persistence_steps,
+            state_switch_persistence_steps=state_switch_persistence_steps,
+            state_ambiguity_window=state_ambiguity_window,
+            state_recovery_lock_steps=state_recovery_lock_steps,
+            state_stress_lock_steps=state_stress_lock_steps,
+            reset_memory_before_run=True,
+        )
+        for sol in solutions
+    ]
