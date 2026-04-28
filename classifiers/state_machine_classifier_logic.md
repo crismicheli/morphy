@@ -8,6 +8,11 @@ The classifier stack is:
 2. **Temporal classifier**: stabilizes short-horizon label fluctuations.
 3. **State machine classifier**: applies explicit transition rules to produce regime-level labels.
 
+## Srtate Machine logic  
+
+![image](state_machine_logic.png)
+
+
 ## Core principle
 
 The state machine does not construct a new scoring system and does not perturb hidden label scores. It inherits labels from the static and temporal classifiers, then applies a fixed sequence of explicit transition rules.
