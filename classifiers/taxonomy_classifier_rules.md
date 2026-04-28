@@ -1,117 +1,160 @@
-# Taxonomy classifier design rules
+Taxonomy classifier design rules
+This document describes the current biological taxonomy classifier used to annotate scaffold-cell-matrix simulations. The classifier assigns one of six labels — Apoptosis, Migration, Proliferation, Quiescence, Diversification, or Undetermined — from the instantaneous system state, its local derivatives, and a deliberately limited subset of interpretable static parameters.
 
-This document defines an explicit rule structure for the biological taxonomy classifier used on scaffold-cell-matrix trajectories. The classifier assigns one of six labels — Apoptosis, Migration, Proliferation, Quiescence, Diversification, or Undetermined — from the instantaneous system state, its local derivatives, and a deliberately restricted subset of static parameters.
+The classifier is designed to be readable, biologically interpretable, and auditable. It is not a machine-learned model, not a hidden-state model, and not a temporal Markov process. It is an ordered rule-based classifier that reads what the system is doing at a given point in time and uses static context only through explicit, named gates.
 
-The rule design treats the evolving state variables as the primary source of truth and the selected static parameters as secondary contextual modifiers. This separation is intentional: the state and derivative values describe what the system is doing now, while the static parameters describe the mechanistic regime under which that behavior occurs.
+Classifier philosophy
+The implementation follows three principles.
 
-## Core principle
+Dynamic-first evidence. The current state variables C, T, E, and O, together with their local derivatives dC, dT, dE, and dO, provide the primary biological signal.
 
-The model evolves four dynamic variables, curvature `C`, cytoskeletal tension `T`, ECM density `E`, and oxygen `O`, with corresponding time derivatives `dC/dt`, `dT/dt`, `dE/dt`, and `dO/dt`. These dynamic quantities are the most direct signals of whether the system is collapsing, remodeling, growing, or remaining near a stable operating point.
+Context-aware refinement. A small subset of static parameters is used to define biologically meaningful contextual tendencies such as oxygen support, matrix drive, or mechanical damping.
 
-For that reason, the classifier should be written in a dynamic-first order. Static parameters should only refine the interpretation of ambiguous or near-boundary states, not overwrite an otherwise clear dynamic signature.
+Ordered first-match logic. Labels are evaluated in a fixed order, and the first satisfied rule determines the output label.
 
-## Primary inputs
+This means the classifier is dynamic-first, but not dynamic-only. Static parameters do not appear merely at the end as tie-breakers; they are embedded explicitly inside several label rules where they help decide whether a dynamic pattern is biologically plausible.
 
-The primary inputs are the current state coordinates and their local derivatives:
+Inputs to the classifier
+The main classifier interface is:
 
-- `C, T, E, O`
-- `dC, dT, dE, dO`
+python
+classify_state(C, T, E, O, dC, dT, dE, dO, bounds, par=None, scenario_cfg=None)
+The inputs have the following roles:
 
-These inputs are primary because they directly encode the observed phenotype of the state. For example, low oxygen with a falling oxygen derivative is already strong evidence for collapse-like behavior, while decreasing ECM under viable oxygen and tension is strong evidence for remodeling or migration-like behavior.
+C: curvature-like structural state
 
-### Why the dynamic variables are primary
+T: cytoskeletal tension
 
-The governing equations directly define phenotype-relevant mechanisms through these variables:
+E: ECM density
 
-- `dC/dt = alpha * (g(p) - C)` links curvature loss or recovery to polarity-like structural state.
-- `dT/dt = beta * C - delta_T * T - eta * E * T` makes tension a central readout of activation versus damping.
-- `dE/dt = kappa * T * O - delta_E * E` makes ECM accumulation versus remodeling directly visible in `E` and `dE`.
-- `dO/dt = rho * h(p) - mu * E * O - delta_O * O` makes oxygen sufficiency versus depletion directly visible in `O` and `dO`.
+O: oxygen availability
 
-Because each biological label is meant to describe a state of the system rather than just a parameter regime, the dynamic variables should dominate classification decisions.
+dC, dT, dE, dO: local time derivatives of those variables
 
-## Secondary inputs
+bounds: viability-style biological reference thresholds
 
-Only a small, biologically interpretable subset of static parameters should be used as contextual modifiers:
+par: base model parameter dictionary
 
-| Parameter | Biological interpretation | Why include it |
-|---|---|---|
-| `p` | Scaffold porosity / structural context | Alters supply and guidance context. |
-| `rho`, `s` | Oxygen supply scaling | Together determine effective oxygen availability from porosity. |
-| `beta` | Curvature-to-tension coupling | Indicates how strongly structure loads tension. |
-| `eta` | ECM-mediated tension damping | Indicates how strongly ECM restrains tension. |
-| `kappa` | ECM deposition rate | Biases toward matrix accumulation or growth-like states. |
-| `mu` | ECM-mediated oxygen consumption | Biases toward oxygen stress and collapse risk. |
-| `delta_T` | Tension decay | Shapes persistence versus relaxation of active tension. |
-| `delta_E` | ECM remodeling / degradation | Shapes persistence versus erosion of matrix. |
-| `delta_O` | Baseline oxygen loss | Shapes vulnerability to low-oxygen states. |
+scenario_cfg: scenario-specific parameter overrides and porosity
 
-This subset is preferable to using the full parameter vector because it preserves interpretability and maps cleanly to the biological semantics of the labels. Parameters such as `a`, `b`, and `alpha` affect the dynamics, but they are less directly tied to the meaning of labels like Apoptosis, Migration, or Quiescence.
+The classifier uses the state variables and derivatives as the main phenotype evidence. It uses the bounds as biological reference ranges, and it uses the effective parameter context to decide whether a given pattern should be interpreted as collapse-like, growth-like, remodeling-like, quiet, or branching-like.
 
-### Derived contextual axes
+Static parameters used explicitly
+The classifier does not use the full ODE parameter vector. It uses only the following interpretable subset:
 
-The classifier should make its secondary logic explicit by constructing a few composite axes from the selected static parameters:
+p
 
-- `oxygen_supply = rho * s * p`, representing effective porosity-linked oxygen support.
-- `tension_drive = beta`, representing the tendency to convert curvature into tension.
-- `tension_damping = eta`, representing ECM-mediated restraint of tension.
-- `matrix_drive = kappa`, representing anabolic ECM production tendency.
-- `oxygen_burden = mu`, representing ECM-dependent oxygen stress burden.
-- `decay_burden = delta_T + delta_E + delta_O`, representing aggregate relaxation / depletion burden.
+beta
 
-These axes keep the code readable and make the biological rationale transparent.
+eta
 
-## Rule order
+kappa
 
-The recommended rule order is:
+mu
 
-1. Evaluate clearly terminal or collapse-like states first.
-2. Evaluate clearly productive or remodeling states next.
-3. Evaluate quiet or low-activity states after that.
-4. Use contextual static parameters only to resolve uncertainty or bias interpretation when the dynamic evidence is mixed.
-5. Fall back to Undetermined for ambiguous boundary cases.
+delta_T
 
-This order prevents static context from overwhelming an obviously interpretable dynamic signature.
+delta_E
 
-## Label definitions
+delta_O
 
-### Apoptosis
+rho
 
-**Primary evidence** should be low oxygen, falling oxygen, low or collapsing curvature, or simultaneous decline in core viability-supporting variables. In code, this means prioritizing cases where `O` is below or near its lower range and `dO < 0`, or where `C` is near collapse and still decreasing.
+s
 
-**Secondary evidence** should be poor oxygen supply, high oxygen burden, or high aggregate decay burden. These parameters do not define apoptosis on their own, but they strengthen the interpretation that a low-oxygen or collapsing state is a genuine death-like trajectory rather than a transient dip.
+These parameters are used because each has a direct interpretation that maps reasonably well onto phenotype-like labels. The goal is to keep the classifier explainable rather than making it depend on every parameter in the dynamical system.
 
-### Migration
+Effective parameter context
+Before any label is assigned, the classifier builds an effective parameter context.
 
-**Primary evidence** should be ECM loss or remodeling under still-viable oxygen and tension, typically `dE < 0` while `O > O_min` and `T >= T_min`. This corresponds to a state that is active and viable, but not retaining or building matrix.
+Start from par.
 
-**Secondary evidence** should be stronger tension damping without excessive tension drive, because that supports matrix loosening and restrained force transmission rather than escalating stress. These static inputs should only reinforce the migration interpretation when the dynamic signal already points toward remodeling.
+Merge scenario_cfg["param_overrides"] on top when available.
 
-### Proliferation
+If scenario_cfg["p"] is present, overwrite p with that value.
 
-**Primary evidence** should be viable oxygen together with increasing matrix, for example `dE > 0` and non-collapsing tension. This indicates biosynthetic or expansion-like behavior rather than merely survival.
+This ensures that the classifier always evaluates the current scenario-specific regime rather than the base parameter set alone.
 
-**Secondary evidence** should be strong matrix drive `kappa` and adequate oxygen supply. These parameters support the interpretation that positive matrix growth is part of a constructive proliferative regime rather than a transient fluctuation.
+Derived contextual axes
+The classifier constructs a small set of explicit helper quantities from the interpretable parameter subset:
 
-### Quiescence
+oxygen_supply = rho * s * p
 
-**Primary evidence** should be moderate viable values of `T`, `E`, and `O` combined with small derivatives, meaning the system is neither collapsing nor actively remodeling. In practice, this means all relevant derivatives are near zero and the state remains away from extreme boundaries.
+tension_drive = beta
 
-**Secondary evidence** should be weak tension drive or generally low forcing. These parameters help explain why the system remains quiet, but they should not create a quiescence label if the dynamic variables show active remodeling or collapse.
+tension_damping = eta
 
-### Diversification
+matrix_drive = kappa
 
-**Primary evidence** should be non-terminal, non-quiescent mixed activity such as rising tension with increasing matrix, or rising curvature with constructive ECM behavior. This label captures directional change or commitment-like behavior rather than a fully settled phenotype.
+oxygen_burden = mu
 
-**Secondary evidence** should be stronger tension drive in the presence of adequate oxygen and nonnegative matrix tendency. This suggests an active mechanobiological regime capable of branching toward differentiated or diversified outcomes.
+decay_burden = delta_T + delta_E + delta_O
 
-### Undetermined
+These are not latent states. They are readable composite quantities used to make the rules biologically explicit.
 
-This label should be used when the state is ambiguous, mixed, or near multiple boundaries without a sufficiently clear dominant interpretation. It is especially useful for cases where dynamic evidence is weak or contradictory and the static context does not resolve the ambiguity.
+Boundary-awareness logic
+The classifier uses helper functions to detect whether a variable is near a lower or upper reference threshold.
 
-## Dynamic-first pseudocode
+_near_lower(x, lo, frac, abs_pad)
 
-```python
+_near_upper(x, hi, frac, abs_pad)
+
+These helpers are used to define the following flags:
+
+near_C_low = _near_lower(C, C_min, frac=0.20, abs_pad=0.03)
+
+near_T_low = _near_lower(T, T_min, frac=0.25, abs_pad=0.05)
+
+near_T_high = _near_upper(T, T_max, frac=0.10, abs_pad=0.08)
+
+near_E_low = _near_lower(E, E_min, frac=0.50, abs_pad=0.05)
+
+near_E_high = _near_upper(E, E_max, frac=0.10, abs_pad=0.12)
+
+near_O_low = _near_lower(O, O_min, frac=0.25, abs_pad=0.05)
+
+This design lets the classifier distinguish between clearly safe values, clearly pathological values, and biologically suspicious near-boundary values.
+
+Context gates used in the rules
+The current implementation turns the contextual axes into explicit boolean gates:
+
+low_oxygen_supply = oxygen_supply < 0.75
+
+high_oxygen_burden = oxygen_burden > 1.0
+
+strong_tension_drive = tension_drive > 2.2
+
+weak_tension_drive = tension_drive < 1.25
+
+strong_tension_damping = tension_damping > 1.0
+
+strong_matrix_drive = matrix_drive > 1.35
+
+high_decay_burden = decay_burden > 2.35
+
+These gates are part of the actual classifier logic and should be treated as implementation-level thresholds rather than vague narrative descriptions.
+
+Decision order
+The classifier is evaluated in the following order:
+
+Apoptosis
+
+Proliferation
+
+Migration
+
+Quiescence
+
+Diversification
+
+Undetermined
+
+This ordering matters. The classifier is a first-match system, so if a state satisfies an earlier label block, later blocks are not evaluated.
+
+Dynamic-first pseudocode
+The implementation is most easily understood as a dynamic-first rule engine with explicit contextual gates inside the label checks. A simplified version of that logic is:
+
+python
 if strong_dynamic_signature_for_apoptosis:
     return "Apoptosis"
 elif strong_dynamic_signature_for_proliferation:
@@ -126,36 +169,81 @@ else:
     use_static_context_to_bias_ambiguous_case()
     if still_ambiguous:
         return "Undetermined"
-```
+This pseudocode is intentionally schematic. In the actual implementation, static context is not applied only at the very end; it is embedded inside several of the rule blocks themselves, but the pseudocode still captures the intended precedence and the dynamic-first reading of the classifier.
 
-This structure makes the intended precedence explicit and preserves biological interpretability.
+State-label determination rules
+The table below summarizes the implemented rules used to assign each label.
 
-## Independence from viability
+Label	Primary dynamic signature	Contextual gates or supporting conditions	Return condition
+Apoptosis	O < O_min or C < C_min; or near_O_low with dO < -0.02; or near_C_low with dC < -0.02	Collapse support from dO < 0, dC < 0, high_oxygen_burden, low_oxygen_supply, high_decay_burden, or nonconstructive dE <= 0 / dT <= 0	Return first if any apoptosis rule matches
+Proliferation	Viable oxygen and matrix gain: O > max(0.35, O_min + 0.10) and dE > 0.03; or near_E_high with dE >= 0	strong_matrix_drive, or supportive tension with T > max(0.30, T_min + 0.10) and dT >= -0.02	Return if no apoptosis rule matched and a proliferation rule matches
+Migration	Viable remodeling: O > O_min, T >= T_min, dE < -0.02; or broader ECM-loss pattern with E > E_min, dE < 0, dT <= 0.03, dO >= -0.02, not near_O_low	Stable or damped tension via abs(dT) < 0.05 or strong_tension_damping and not strong_tension_drive	Return if earlier labels did not match and a migration rule matches
+Quiescence	Viable moderate state with small derivatives: T_min <= T <= 0.75*T_max, E_min <= E <= 0.70*E_max, O > O_min + 0.08, abs(dT) < 0.03, abs(dE) < 0.02, abs(dO) < 0.03	Low-drive alternative: near_T_low, weak_tension_drive, dT <= 0, dE <= 0.02, O > O_min	Return if earlier labels did not match and a quiescence rule matches
+Diversification	Active non-terminal constructive change with O > O_min and C > C_min, plus one of: dT > 0.04 and dE > 0, near_T_high and dE >= 0, or dC > 0.02 and dE > 0	Alternative contextual branch: strong_tension_drive, not (T > T_max), dT >= 0, dE >= -0.01	Return if earlier labels did not match and a diversification rule matches
+Undetermined	Mixed, weak, boundary-adjacent, or unmatched dynamics	near_T_high, near_E_high, near_O_low, near_E_low, or near_C_low; otherwise global fallback	Return when no earlier state rule matched
+Per-label explanation
+Apoptosis
+Apoptosis is intended to capture collapse-like or terminal behavior. The strongest evidence is low oxygen, collapsing curvature, worsening oxygen, or strong depletion burden. In the implementation, apoptosis is evaluated first so that clearly terminal patterns take precedence over productive or remodeling interpretations.
 
-The taxonomy classification should remain **independent from viability classification**. Viability answers whether a trajectory stays inside a predefined admissible region, while the taxonomy answers what kind of biological state a point or trajectory appears to represent.
+Proliferation
+Proliferation captures viable, constructive matrix-building behavior. The classifier looks primarily for adequate oxygen together with positive ECM growth, then uses matrix-drive or non-collapsing tension to support the interpretation.
 
-The viability logic is threshold-based and uses bounds such as `C_min`, `T_min`, `T_max`, `E_min`, `E_max`, and `O_min` to determine whether a state remains inside a kernel-like acceptable region. A trajectory is viable when it remains within those bounds across time.
+Migration
+Migration captures viable ECM remodeling or matrix loss without immediate collapse. The most important signal is dE < 0 under still-viable oxygen and tension, especially when tension remains stable or is strongly damped.
 
-By contrast, taxonomy labels should describe biological mode even when a state is outside viability bounds. For example:
+Quiescence
+Quiescence captures quiet, viable, low-activity states. The main signature is a moderate operating range together with small derivatives. A weak-tension-drive alternative also supports quiescence when the system sits near low tension without showing signs of collapse.
 
-- A state can be classified as Apoptosis precisely because it has crossed into low-oxygen or collapse-like territory.
-- A state can be Migration-like while still viable, because it may be remodeling matrix without violating any bound.
-- A state can be Undetermined even if it is technically viable, because viability does not imply clear biological identity.
+Diversification
+Diversification captures non-terminal, non-quiescent activity suggestive of directional commitment or branching. The classifier looks for rising tension and constructive ECM behavior, or for positive curvature-plus-ECM growth patterns, with strong tension drive as an alternative contextual route.
 
-This separation is important because otherwise taxonomy would collapse into a restatement of the viability test rather than a biologically meaningful interpretation layer.
+Undetermined
+Undetermined is the ambiguity label and the global fallback. It is used when the state sits near problematic boundaries, when the evidence is mixed, or when none of the earlier state definitions fits cleanly.
 
-## Practical coding guidance
+Relationship to viability
+Taxonomy and viability are related but not identical.
 
-The classifier implementation should therefore follow these design constraints:
+Viability asks whether a point or a trajectory stays inside a predefined admissible region defined by thresholds such as C_min, T_min, T_max, E_min, E_max, and O_min. Taxonomy asks what kind of biological mode the system appears to be expressing.
 
-- Keep `classify_state(C, T, E, O, dC, dT, dE, dO, bounds, par=None, scenario_cfg=None)` as the central interface.
-- Compute derivatives from the simulated trajectory before classification, because local flow is part of the primary evidence.
-- Read static parameter overrides from `scenario_cfg["param_overrides"]` and porosity from `scenario_cfg["p"]`, merged on top of base parameters.
-- Store the chosen static subset in a named constant such as `INTERPRETABLE_STATIC_PARAMS` so the model assumptions are visible in code.
-- Keep taxonomy labels and viability reports separate objects or separate function outputs.
+The taxonomy classifier does use these thresholds and their near-boundary neighborhoods as biological reference values. However, it does not produce viability reports and should not be interpreted as a direct viability classifier. The same reference bounds help anchor both systems, but the outputs answer different questions.
 
-## Summary of intended philosophy
+Instantaneous and trajectory-level use
+The central classifier is instantaneous. It takes one sampled point and returns one label. It has no built-in memory of previous states.
 
-The classifier should be interpreted as a biological state annotator layered on top of the dynamical system. Its first task is to read what the system is doing from `C`, `T`, `E`, `O` and their derivatives; its second task is to use a small, explicit subset of mechanistically meaningful static parameters to clarify uncertain cases.
+Trajectory-level labeling is handled separately by:
 
-That philosophy keeps the classifier readable, biologically interpretable, and distinct from the independent viability kernel logic already implemented in the simulation stack.
+python
+classify_solution(sol, bounds, par=None, scenario_cfg=None, n_samples=7)
+This helper:
+
+Computes local derivatives from the trajectory.
+
+Selects a fixed number of evenly spaced sample indices.
+
+Classifies each sampled point independently with classify_state.
+
+Returns the majority label across those sampled points.
+
+This is a sampling-and-voting strategy, not temporal smoothing and not a hidden-state model.
+
+Practical coding guidance
+The implementation should continue to follow these constraints:
+
+Keep classify_state(...) as the central interface.
+
+Use derivatives as part of the primary evidence, not as optional decoration.
+
+Merge scenario overrides before extracting contextual axes.
+
+Keep the static parameter subset explicit in INTERPRETABLE_STATIC_PARAMS.
+
+Document helper thresholds and contextual gates in the code and in the accompanying design document.
+
+Preserve the ordered first-match rule structure so rule precedence stays auditable.
+
+Keep taxonomy labels separate from viability reports.
+
+Recommended interpretation
+The classifier should be understood as an interpretable biological annotation layer built on top of the dynamical system. Its job is to read what the system is doing locally, then use a limited amount of mechanistic context to resolve whether that local behavior is better interpreted as collapse, growth, remodeling, quiescence, branching, or ambiguity.
+
+That balance — dynamic-first evidence, explicit contextual gates, and auditable rule order — is the central design philosophy of the current implementation.
