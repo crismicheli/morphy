@@ -74,6 +74,11 @@ The order matters. Earlier rules may alter the candidate label before later rule
 | **Switch persistence** | Candidate differs from the previous label but lacks enough recent support in history | Keep the previous label, unless the previous label is `Undetermined`, in which case allow the candidate |
 | **Sustained apoptosis retention** | Previous state-machine label is `Apoptosis` | Keep `Apoptosis` while still outside viability or while recovery remains weak; only relax to `Undetermined` after sustained recovery |
 
+## Transition states
+
+[!image](state_machine_v2.png)  
+
+
 ## Allowed transition map
 
 The explicit allowed transition map is:
