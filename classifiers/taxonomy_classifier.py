@@ -6,28 +6,28 @@ from typing import Dict, Iterable, List, Optional
 import numpy as np
 
 STATE_COLORS = {
-    "Apoptosis": "#111111",       # near-black
-    "Migration": "#00B7FF",       # vivid cyan
-    "Proliferation": "#FF7A00",   # vivid orange
-    "Quiescence": "#2ECC40",      # bright green
-    "Diversification": "#8E44AD", # strong purple
-    "Undetermined": "#FFD400",    # saturated yellow
+    "Apoptosis": "#111111",      # near-black
+    "Migration": "#00B7FF",      # vivid cyan
+    "Proliferation": "#FF7A00",  # vivid orange
+    "Quiescence": "#2ECC40",     # bright green
+    "Diversification": "#8E44AD",# strong purple
+    "Undetermined": "#FFD400",   # saturated yellow
 }
 
 # Biologically interpretable static parameters intentionally used by the classifier.
 # We do NOT use the full parameter vector; we only keep the subset that maps cleanly
 # to phenotype-like labels.
 INTERPRETABLE_STATIC_PARAMS = (
-    "p",         # scaffold porosity / structural context
-    "beta",      # curvature-to-tension coupling
-    "eta",       # ECM-mediated tension damping
-    "kappa",     # ECM deposition rate
-    "mu",        # ECM-mediated oxygen consumption
-    "delta_T",   # intrinsic tension decay
-    "delta_E",   # ECM remodelling / degradation
-    "delta_O",   # baseline oxygen loss
-    "rho",       # porosity-to-oxygen scaling
-    "s",         # oxygen-supply scaling with porosity
+    "p",        # scaffold porosity / structural context
+    "beta",     # curvature-to-tension coupling
+    "eta",      # ECM-mediated tension damping
+    "kappa",    # ECM deposition rate
+    "mu",       # ECM-mediated oxygen consumption
+    "delta_T",  # intrinsic tension decay
+    "delta_E",  # ECM remodelling / degradation
+    "delta_O",  # baseline oxygen loss
+    "rho",      # porosity-to-oxygen scaling
+    "s",        # oxygen-supply scaling with porosity
 )
 
 
@@ -48,7 +48,6 @@ def _extract_parameter_context(
     scenario_cfg: Optional[dict] = None,
 ) -> Dict[str, float]:
     eff = _merge_effective_parameters(par=par, scenario_cfg=scenario_cfg)
-
     ctx = {key: float(eff.get(key, np.nan)) for key in INTERPRETABLE_STATIC_PARAMS}
 
     p = 0.0 if np.isnan(ctx["p"]) else ctx["p"]
@@ -62,7 +61,6 @@ def _extract_parameter_context(
     delta_E = 0.5 if np.isnan(ctx["delta_E"]) else ctx["delta_E"]
     delta_O = 0.4 if np.isnan(ctx["delta_O"]) else ctx["delta_O"]
 
-    # Composite interpretable axes used by the heuristic rules below.
     ctx.update(
         {
             "oxygen_supply": rho * s * p,
@@ -99,23 +97,20 @@ def classify_state(
 ) -> str:
     """Classify one instantaneous state into a coarse biological taxonomy.
 
-    The classifier combines:
-    1. current state variables (C, T, E, O),
-    2. local derivatives (dC, dT, dE, dO),
-    3. a deliberately small, biologically interpretable subset of static parameters.
-
-    The static subset is explicit in INTERPRETABLE_STATIC_PARAMS and is intended to
-    bias the taxonomy toward phenotype-like interpretations without making the logic
-    opaque or overfit to the full ODE parameter vector.
+    Implementation philosophy:
+    - dynamic-first: state variables and local derivatives provide the main evidence,
+    - context-aware: a small interpretable subset of static parameters contributes
+      directly through explicit contextual gates,
+    - ordered: labels are evaluated by first-match precedence rather than scoring.
     """
     ctx = _extract_parameter_context(par=par, scenario_cfg=scenario_cfg)
 
-    C_min = bounds["C_min"]
-    T_min = bounds["T_min"]
-    T_max = bounds["T_max"]
-    E_min = bounds["E_min"]
-    E_max = bounds["E_max"]
-    O_min = bounds["O_min"]
+    C_min = float(bounds["C_min"])
+    T_min = float(bounds["T_min"])
+    T_max = float(bounds["T_max"])
+    E_min = float(bounds["E_min"])
+    E_max = float(bounds["E_max"])
+    O_min = float(bounds["O_min"])
 
     near_C_low = _near_lower(C, C_min, frac=0.20, abs_pad=0.03)
     near_T_low = _near_lower(T, T_min, frac=0.25, abs_pad=0.05)
@@ -133,19 +128,18 @@ def classify_state(
     high_decay_burden = ctx["decay_burden"] > 2.35
 
     # 1) APOPTOSIS
-    # Educated guess: low oxygen, collapsing curvature, falling oxygen, or high
-    # oxygen-consumption / decay burden indicates cell loss / collapse.
-    if O < O_min or C < C_min:
-        if dO < 0 or dC < 0 or high_oxygen_burden or low_oxygen_supply or high_decay_burden:
-            return "Apoptosis"
-    if near_O_low and (dO < -0.02) and (high_oxygen_burden or low_oxygen_supply):
+    # Terminal or collapse-like states are evaluated first.
+    if (O < O_min or C < C_min) and (
+        dO < 0 or dC < 0 or high_oxygen_burden or low_oxygen_supply or high_decay_burden
+    ):
+        return "Apoptosis"
+    if near_O_low and dO < -0.02 and (high_oxygen_burden or low_oxygen_supply):
         return "Apoptosis"
     if near_C_low and dC < -0.02 and (dE <= 0 or dT <= 0):
         return "Apoptosis"
 
     # 2) PROLIFERATION
-    # Educated guess: viable oxygen, increasing matrix, non-collapsing tension,
-    # and strong matrix drive support growth / biosynthetic expansion.
+    # Viable oxygen plus constructive ECM growth, optionally reinforced by context.
     if O > max(0.35, O_min + 0.10) and dE > 0.03:
         if strong_matrix_drive or (T > max(0.30, T_min + 0.10) and dT >= -0.02):
             return "Proliferation"
@@ -153,8 +147,7 @@ def classify_state(
         return "Proliferation"
 
     # 3) MIGRATION
-    # Educated guess: migration corresponds to viable but remodelling states with
-    # matrix loosening/turnover, preserved oxygen, and non-terminal tension.
+    # Viable remodelling / ECM loss under non-terminal tension and oxygen.
     if O > O_min and T >= T_min and dE < -0.02:
         if abs(dT) < 0.05 or (strong_tension_damping and not strong_tension_drive):
             return "Migration"
@@ -162,7 +155,7 @@ def classify_state(
         return "Migration"
 
     # 4) QUIESCENCE
-    # Educated guess: moderate viable state with small derivatives and low drive.
+    # Viable, low-activity states with small local flow and low mechanical drive.
     if (
         T_min <= T <= 0.75 * T_max
         and E_min <= E <= 0.70 * E_max
@@ -176,9 +169,7 @@ def classify_state(
         return "Quiescence"
 
     # 5) DIVERSIFICATION
-    # Educated guess: this label captures non-terminal, non-homeostatic branching
-    # states with mixed signals - e.g. adequate oxygen but rising tension and/or
-    # ECM, suggesting directional commitment rather than stasis.
+    # Active, non-terminal, non-quiescent commitment-like states.
     if O > O_min and C > C_min:
         if (dT > 0.04 and dE > 0) or (near_T_high and dE >= 0) or (dC > 0.02 and dE > 0):
             return "Diversification"
@@ -187,7 +178,7 @@ def classify_state(
             return "Diversification"
 
     # 6) UNDETERMINED
-    # Fallback for mixed or ambiguous states, including near-boundary regions.
+    # Explicit boundary-aware ambiguity label plus global fallback.
     if near_T_high or near_E_high or near_O_low or near_E_low or near_C_low:
         return "Undetermined"
     return "Undetermined"
