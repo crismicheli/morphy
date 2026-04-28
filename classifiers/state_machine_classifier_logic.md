@@ -2,7 +2,9 @@
 
 ## Overview
 
-This classifier is a deterministic finite-state machine built on the scaffolding of the temporal classifier. It keeps the same state set, the same viability logic, the same recovery logic, the same instantaneous biological score layer, the same static-parameter modulation layer, and the same transition graph and hysteresis structure. The new part is that it adds explicit deterministic transition biases that act on top of the temporal classifier before the final transition arbitration is resolved.
+This classifier is a deterministic finite-state machine built on the scaffolding of the temporal classifier. The reason for this classifier is that the previous one (temporal) has edge case inconsistencies (e.g. a label shows apoptosis only because the trajectory staty lies outside the viability kernel), and many ensemble states (labels) are still estimated only statically by calculating their belonging to some kind of range or set value (naive classifier).
+
+With respect to the temporal one, it keeps the same state set, the same viability logic, the same recovery logic, the same instantaneous biological score layer, the same static-parameter modulation layer, and the same transition graph and hysteresis structure. The new part is that it adds explicit deterministic transition biases that act on top of the temporal classifier before the final transition arbitration is resolved.
 
 The result is no longer a purely temporal score smoother. It becomes an explicit state machine with memory, persistence, deterministic bias rules, and controlled transition behavior.
 
