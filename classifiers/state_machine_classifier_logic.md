@@ -8,9 +8,9 @@ The classifier stack is:
 2. **Temporal classifier**: stabilizes short-horizon label fluctuations.
 3. **State machine classifier**: applies explicit transition rules to produce regime-level labels.
 
-## State Machine logic  
+## State Machine logic   
 
-![image](state_machine_logic.png)
+![image](state_machine_logic.png?v=2)
 
 
 ## Core principle
