@@ -1,316 +1,145 @@
-# Deterministic State Machine Classifier
+# Deterministic state machine classifier design rules
 
-## Overview
+This document describes a three-layer state machine classifier whose transition logic is expressed through **explicit named rules**, not score biases.
 
-This classifier is a deterministic finite-state machine built on the scaffolding of the temporal classifier. The reason for this classifier is that the previous one (temporal) has edge case inconsistencies (e.g. a label shows apoptosis only because the trajectory staty lies outside the viability kernel), and many ensemble states (labels) are still estimated only statically by calculating their belonging to some kind of range or set value (naive classifier).
+The classifier stack is:
 
-With respect to the temporal one, it keeps the same state set, the same viability logic, the same recovery logic, the same instantaneous biological score layer, the same static-parameter modulation layer, and the same transition graph and hysteresis structure. The new part is that it adds explicit deterministic transition biases that act on top of the temporal classifier before the final transition arbitration is resolved.
+1. **Static classifier**: defines instantaneous taxonomy label meaning.
+2. **Temporal classifier**: stabilizes short-horizon label fluctuations.
+3. **State machine classifier**: applies explicit transition rules to produce regime-level labels.
 
-The result is no longer a purely temporal score smoother. It becomes an explicit state machine with memory, persistence, deterministic bias rules, and controlled transition behavior.
+## Core principle
 
-The six states are:
+The state machine does not construct a new scoring system and does not perturb hidden label scores. It inherits labels from the static and temporal classifiers, then applies a fixed sequence of explicit transition rules.
 
-- Apoptosis
-- Migration
-- Proliferation
-- Quiescence
-- Diversification
-- Undetermined
+This makes the code auditable: every final transition can be explained by a named rule rather than by a numerical bias.
 
-## What is inherited from the temporal classifier
+## Inputs inherited from lower layers
 
-The deterministic state machine inherits the following components directly from the temporal classifier design:
+For each sampled point, the state machine reads:
 
-- viability-box membership check;
-- recovery score from inward-pointing derivatives;
-- primary instantaneous score layer based on `C`, `T`, `E`, `O`, `dC`, `dT`, `dE`, `dO`;
-- secondary static-parameter modulation from `par` and `scenario_cfg`;
-- inside and outside counters;
-- sticky apoptosis behavior;
-- transition constraints among the six labels;
-- hysteresis via recent candidate history.
+- `static_label` from the static classifier,
+- `temporal_label` from the temporal classifier,
+- `inside` from a separate viability-membership check,
+- `recovery` from a separate recovery-score helper,
+- current memory state and streak counters.
 
-That means the state machine does not replace the temporal classifier logic. It extends it.
+The state machine does not redefine taxonomy semantics. It only controls how inherited labels persist or transition over time.
 
-## What is new compared with the temporal classifier
+## Memory and streaks
 
-The new state machine introduces deterministic transition biases on top of the temporal score scaffold.
+The state machine keeps the following memory variables:
 
-These are the genuinely new mechanisms:
-
-- ambiguity-driven biasing;
-- recovery-streak biasing;
-- stress-streak biasing;
-- state-retention biases tied to static parameters;
-- scenario-dependent persistence biases.
-
-These biases are applied after the instantaneous dynamic scores and static parameter modifiers have been computed, but before the candidate state is finalized.
-
-## Core design principle
-
-The temporal classifier mainly asks whether a state is currently supported and whether that support is persistent enough to survive hysteresis.
-
-The deterministic state machine goes one step further. It asks whether the system should be nudged toward or away from certain transitions based on explicit rule-based trajectory context.
-
-In other words:
-
-- the temporal classifier scores states;
-- the state machine biases transitions.
-
-## Memory structure
-
-The state machine keeps all memory variables from the temporal classifier and adds three more:
-
+- `last_state_machine_label`
+- `last_temporal_label`
+- `last_static_label`
+- `dwell_count`
+- `history`
+- `temporal_history`
+- `static_history`
+- `outside_viability_count`
+- `inside_viability_count`
 - `recovery_streak`
 - `stress_streak`
 - `ambiguity_streak`
 
-### `recovery_streak`
+These variables support explicit transition rules rather than score manipulation.
 
-Counts how many consecutive steps the system has been inside viability with a sufficiently strong recovery signal.
+## Rule order
 
-### `stress_streak`
+The state machine applies its rules in the following order:
 
-Counts how many consecutive steps the system has been outside viability with no recovery evidence.
+1. Ambiguity persistence rule
+2. Stress lock rule
+3. Recovery unlock rule
+4. Allowed transition rule
+5. Switch persistence rule
+6. Sustained apoptosis retention rule
 
-### `ambiguity_streak`
+The order matters. Earlier rules may alter the candidate label before later rules evaluate it.
 
-Counts how many consecutive steps the score competition among labels has been too close to call clearly.
+## Transition rules
 
-These extra memory variables are the main new deterministic state-machine mechanism.
+| Rule | Condition | Action |
+|---|---|---|
+| **Ambiguity persistence** | `ambiguity_streak >= state_ambiguity_window` | Set candidate to `Undetermined` |
+| **Stress lock** | `stress_streak >= state_stress_lock_steps`, outside viability, and `temporal_label` is `Apoptosis` or `Undetermined` | Set candidate to `Apoptosis` |
+| **Recovery unlock** | `recovery_streak >= state_recovery_lock_steps` | If candidate is `Apoptosis`, replace with `Undetermined`; if candidate is `Undetermined` and `temporal_label` is `Quiescence` or `Proliferation`, restore that temporal label |
+| **Allowed transition** | Candidate transition is not permitted by the transition map from the previous state-machine label | Reject the candidate and keep the previous label |
+| **Switch persistence** | Candidate differs from the previous label but lacks enough recent support in history | Keep the previous label, unless the previous label is `Undetermined`, in which case allow the candidate |
+| **Sustained apoptosis retention** | Previous state-machine label is `Apoptosis` | Keep `Apoptosis` while still outside viability or while recovery remains weak; only relax to `Undetermined` after sustained recovery |
 
-## Base score layer
+## Allowed transition map
 
-The base score layer is unchanged in structure relative to the temporal classifier.
+The explicit allowed transition map is:
 
-It still computes:
+| Previous label | Allowed next labels |
+|---|---|
+| `Undetermined` | `Apoptosis`, `Proliferation`, `Migration`, `Quiescence`, `Diversification`, `Undetermined` |
+| `Quiescence` | `Quiescence`, `Migration`, `Proliferation`, `Diversification`, `Undetermined`, `Apoptosis` |
+| `Migration` | `Migration`, `Diversification`, `Quiescence`, `Undetermined`, `Apoptosis` |
+| `Proliferation` | `Proliferation`, `Diversification`, `Quiescence`, `Undetermined`, `Apoptosis` |
+| `Diversification` | `Diversification`, `Migration`, `Proliferation`, `Quiescence`, `Undetermined`, `Apoptosis` |
+| `Apoptosis` | `Apoptosis`, `Undetermined` |
 
-- apoptosis from stress and decaying variables;
-- migration from elevated tension and forward dynamic activity;
-- proliferation from viable balanced growth;
-- quiescence from viable low-dynamics stability;
-- diversification from viable remodeling activity;
-- undetermined from ambiguity and outside-viability buffering.
+This map is explicit and should be treated as part of the model definition.
 
-## Static-parameter layer
+## Workflow pseudocode
 
-The static-parameter layer is also preserved. It still uses:
+```python
+static_label = static_classifier.classify_state(...)
+temporal_label = temporal_classifier.classify_state(...)
+inside = inside_viability(...)
+recovery = recovery_score(...)
 
-- adhesion or `alpha`;
-- motility or `m`;
-- growth or `g`;
-- oxygen support or `o`;
-- remodeling or `r`;
-- stress or `s`;
-- scenario parameter `p`;
-- scenario expected regime.
+update_streaks(...)
 
-These quantities multiplicatively modulate the base scores before state-machine-specific biases are applied.
+candidate = temporal_label
+candidate = ambiguity_persistence_rule(candidate)
+candidate = stress_lock_rule(candidate)
+candidate = recovery_unlock_rule(candidate)
+candidate = allowed_transition_rule(candidate, previous_label)
+candidate = switch_persistence_rule(candidate, previous_label)
+final = sustained_apoptosis_retention_rule(candidate, previous_label)
 
-## New mechanism 1: ambiguity bias
+update_memory()
+return final
+```
 
-The classifier first measures the gap between the highest and second-highest score.
+## Separation of taxonomy and viability
 
-If this top-gap is small, the system is interpreted as ambiguous. In that case:
+The state machine preserves the same separation used in the lower layers.
 
-- `Undetermined` receives a positive deterministic bias;
-- the ambiguity streak counter increases.
+- Taxonomy meaning comes from the static classifier.
+- Short-term label stabilization comes from the temporal classifier.
+- Viability membership and recovery are not label definitions; they are only transition-management signals.
 
-If ambiguity persists for multiple consecutive steps, the `Undetermined` bias becomes even stronger.
+This means the state machine does not collapse taxonomy into viability status.
 
-### Why this is new
+## What is new on top of the lower layers
 
-The temporal classifier already had a weak undetermined fallback, but it did not explicitly track persistent score ambiguity as its own memory process. The state machine does.
+The genuinely new contribution of the state machine is:
 
-### Effect on transitions
+- explicit regime-level transition rules,
+- explicit allowed-transition constraints,
+- explicit persistent-ambiguity handling,
+- explicit sustained-stress escalation,
+- explicit sustained-recovery relaxation,
+- explicit regime-level persistence beyond the temporal wrapper.
 
-This mechanism makes the system more reluctant to jump prematurely into a committed biological state when the evidence is indecisive for several steps in a row.
+These additions operate on inherited labels rather than redefining taxonomy.
 
-## New mechanism 2: recovery-streak bias
+## Solution-level use
 
-If the system is inside viability and the recovery score is sufficiently strong, the recovery streak increases.
+At the solution level, the classifier:
 
-When this recovery streak persists:
+1. computes derivatives,
+2. samples evenly spaced points,
+3. applies the full three-layer stack point by point,
+4. returns the majority state-machine label.
 
-- Quiescence receives a positive bias;
-- Proliferation receives a positive bias;
-- Apoptosis receives a negative bias.
+This preserves continuity with the existing sampling-and-voting design while making transition logic more explicit.
 
-### Why this is new
+## Recommended interpretation
 
-The temporal classifier used recovery mainly as a protective condition near the boundary and as a gate for leaving apoptosis. The state machine upgrades recovery into an explicit trajectory-level transition bias.
-
-### Effect on transitions
-
-Sustained recovery gradually tilts the machine toward viable stable or constructive states, even before a transition is fully locked in.
-
-## New mechanism 3: stress-streak bias
-
-If the system is outside viability and has no recovery evidence, the stress streak increases.
-
-When this stress streak persists:
-
-- Apoptosis receives a strong positive bias;
-- Undetermined receives a weaker positive bias.
-
-### Why this is new
-
-The temporal classifier already penalized nonviability, but it did not separately accumulate unresolved stress as a deterministic transition driver. The state machine does.
-
-### Effect on transitions
-
-Repeated failed states without signs of correction will increasingly push the system toward apoptosis, while still allowing a short unresolved buffer through `Undetermined`.
-
-## New mechanism 4: state-retention biases from static parameters
-
-The state machine adds state-retention biases based on both the previous label and the static parameter regime.
-
-Examples:
-
-- if the current label is Migration and motility support is high, Migration gets an extra positive bias;
-- if the current label is Proliferation and growth support is high, Proliferation gets an extra positive bias;
-- if the current label is Diversification and remodeling support is high, Diversification gets an extra positive bias.
-
-### Why this is new
-
-The temporal classifier already used static parameters to rescale scores, but it did not combine them with the previously occupied state to create deterministic retention tendencies. The state machine does.
-
-### Effect on transitions
-
-This creates path-dependent persistence. A state that is already active and well-supported by the static environment is harder to leave.
-
-## New mechanism 5: scenario-dependent persistence biases
-
-The state machine also adds deterministic context-sensitive biases based on the expected scenario regime.
-
-### Unstable scenarios
-
-If the scenario is unstable and outside-viability persistence is building up, apoptosis is biased upward.
-
-### Boundary or borderline scenarios
-
-If the scenario is boundary-like and the top score gap is small, Undetermined is biased upward and Diversification receives a mild boost.
-
-### Stable scenarios
-
-If the scenario is stable, the point is inside viability, and inside persistence is long enough, Quiescence and Proliferation are biased upward.
-
-### Why this is new
-
-The temporal classifier already had scenario-level score priors, but it did not combine them explicitly with temporal persistence conditions to drive transitions. The state machine does.
-
-## Order of operations
-
-For each time point, the deterministic state machine executes the following sequence:
-
-1. Determine the memory key from `par` and `scenario_cfg`.
-2. Retrieve the memory state.
-3. Check whether the current point is inside viability.
-4. Update inside and outside counters.
-5. Compute the recovery score.
-6. Compute the base instantaneous class scores.
-7. Apply static-parameter multiplicative modifiers.
-8. Compute deterministic transition biases.
-9. Add these biases to the class scores.
-10. Select the provisional candidate label.
-11. Apply boundary grace rules.
-12. Apply apoptosis-entry safeguards.
-13. Apply sticky apoptosis exit rules.
-14. Enforce the allowed transition graph.
-15. Apply hysteresis.
-16. Emit the final label.
-17. Update all memory counters and streaks.
-
-## Relation between biases and hysteresis
-
-The new biases do not replace hysteresis. They operate before hysteresis.
-
-That means the architecture now has two different stabilization mechanisms:
-
-- **biases**, which shape which candidate is proposed;
-- **hysteresis**, which decides whether the proposed change has enough recent support to be accepted.
-
-This is one of the most important differences from the temporal classifier.
-
-### Temporal classifier
-
-The temporal classifier mainly stabilizes after the score competition has already produced a candidate.
-
-### State machine classifier
-
-The state machine classifier influences the competition itself before hysteresis is applied.
-
-So the state machine is not just “more hysteretic.” It is biased upstream of hysteresis.
-
-## Why this is still deterministic
-
-Every output is determined by the current observable state, the static parameter context, and the finite memory variables. No random sampling, transition probabilities, or stochastic draws are used.
-
-If the same input sequence is replayed from the same initial memory state, the output state sequence will be identical.
-
-## Why this is a state machine
-
-This model qualifies as a deterministic state machine because:
-
-- it has a finite set of discrete states;
-- it keeps an explicit internal memory state;
-- it updates that memory by deterministic rules;
-- its next emitted state depends on the current state, current observables, and explicit transition logic.
-
-It is not a Markov chain because transition behavior depends on counters and streaks, not only on the current emitted label.
-
-## Transition structure
-
-The allowed transition structure is inherited from the temporal classifier.
-
-- `Undetermined` can move to any state.
-- `Quiescence` can remain quiescent or move to Migration, Proliferation, Diversification, Undetermined, or Apoptosis.
-- `Migration` can remain migratory or move to Diversification, Quiescence, Undetermined, or Apoptosis.
-- `Proliferation` can remain proliferative or move to Diversification, Quiescence, Undetermined, or Apoptosis.
-- `Diversification` can remain diversified or move to Migration, Proliferation, Quiescence, Undetermined, or Apoptosis.
-- `Apoptosis` can only remain Apoptosis or move to Undetermined.
-
-The new deterministic biases act inside this graph. They do not add new edges. They alter which allowed edge becomes favored.
-
-## Interpretation of the new behavior
-
-The revised classifier should be interpreted as a rule-driven controller on top of the temporal scaffold.
-
-- ambiguity pushes the machine toward neutral holding states;
-- sustained recovery pushes it toward viable stabilizing or constructive states;
-- sustained unresolved stress pushes it toward failure;
-- state-environment agreement increases persistence in the current state;
-- scenario context shapes how fast these tendencies accumulate.
-
-
-
-## Transition logic in words
-
-State transitions follow a deterministic biological logic rather than an arbitrary graph. `Undetermined` functions as a buffer for ambiguous or boundary-near cases, `Apoptosis` acts as a sticky failure sink that can only recover through `Undetermined`, and the viable active states (`Quiescence`, `Migration`, `Proliferation`, `Diversification`) interconvert according to changes in dynamical regime such as recovery, motility, growth, or remodeling. Hysteresis and persistence rules prevent abrupt switching, while additional deterministic biases tilt transitions toward stable, stressed, or recovery-driven directions depending on recent trajectory context.
-
-## Transition figure
-
-![Deterministic state transitions](state_machine.png)
-
-
-
-## Main conceptual difference from the temporal classifier
-
-The temporal classifier answers: “given the current evidence and recent history, which label should be emitted?”
-
-The state machine classifier answers: “given the current evidence, recent history, and ongoing transition tendencies, which state transition should the machine commit to now?”
-
-That is the core conceptual upgrade.
-
-## Summary of what changed
-
-Compared with the temporal classifier, the deterministic state machine adds:
-
-- explicit ambiguity tracking;
-- explicit recovery streak tracking;
-- explicit stress streak tracking;
-- retention biases tied to the current occupied state and static support parameters;
-- scenario-dependent persistence biases;
-- upstream transition shaping before hysteresis.
-
-These additions make the classifier behave more like a designed state machine and less like a passive temporal smoother.
+The state machine should be interpreted as a regime-management layer, not as a replacement taxonomy model. Its role is to decide when inherited labels should persist, when they may transition, and when ambiguity, sustained stress, or sustained recovery should dominate the regime-level interpretation.
