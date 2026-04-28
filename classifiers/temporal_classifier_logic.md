@@ -1,524 +1,182 @@
-# Temporal Classifier Logic
+# Temporal taxonomy classifier design rules
 
-## Overview
+This document defines a temporal taxonomy classifier that explicitly **inherits from** the current static classifier in `taxonomy_classifier.py` rather than replacing it.
 
-The temporal classifier is a hybrid decision system. It combines a pointwise phenotype scorer with short-term memory, recovery-aware boundary logic, transition constraints, and a secondary layer of static-parameter modulation. The result is a classifier that still reacts to the current values of `C`, `T`, `E`, `O` and their derivatives, but no longer treats each time point as fully independent.
+The temporal classifier is designed to preserve the static classifier philosophy:
 
-The classifier outputs one of six labels:
+1. **Dynamic-first instantaneous evidence remains primary**.
+2. **Static contextual parameters remain those already defined and used by the static classifier**.
+3. **Viability bounds remain separate from taxonomy semantics**.
+4. **Temporal logic is added only as a clearly delimited post-processing layer**.
 
-- Apoptosis
-- Migration
-- Proliferation
-- Quiescence
-- Diversification
-- Undetermined
+## Inheritance from the static classifier
 
-Its decision process can be understood as two stacked levels:
+The temporal classifier does **not** introduce a new instantaneous scoring system. It first calls the existing static classifier:
 
-1. An instantaneous scoring layer that evaluates the current state.
-2. A temporal arbitration layer that decides whether the currently favored state is strong and persistent enough to become the emitted label.
+```python
+classify_static_state(C, T, E, O, dC, dT, dE, dO, bounds, par=None, scenario_cfg=None)
+```
 
-In the revised implementation, the instantaneous layer itself has two subparts:
+This means the temporal model inherits all of the following from the static classifier:
 
-- primary dynamic and geometric scoring from the current state and derivatives;
-- secondary score modulation from static parameters and scenario metadata.
+- the same dynamic-first interpretation of `C`, `T`, `E`, `O` and their derivatives,
+- the same interpretable static parameter subset,
+- the same contextual gates,
+- the same label set,
+- the same ordered first-match rule structure.
 
-## Inputs
+Therefore, the temporal layer is not a new taxonomy definition. It is a temporal wrapper around the already defined taxonomy.
 
-For each time point, the classifier receives:
+## What is new in the temporal classifier
 
-- `C`, `T`, `E`, `O`
-- `dC`, `dT`, `dE`, `dO`
-- `bounds`
-- optional `par`
-- optional `scenario_cfg`
+The temporal classifier adds only a small number of explicit time-related computational elements.
 
-The four state variables define the current biological system state. The four derivatives describe the local direction of motion in state space. The bounds define the viability box. The optional parameter dictionaries provide static contextual information.
+### 1. Memory of previous assigned labels
 
-## High-level structure
+The classifier stores a short memory object per parameter/scenario signature. That memory includes:
 
-The classifier executes the following conceptual pipeline:
+- the last temporal label,
+- the last base static label,
+- dwell count for the current temporal label,
+- short recent history of temporal labels,
+- short recent history of base static labels,
+- counts of consecutive samples inside and outside viability bounds.
 
-1. Identify the memory context from static parameters and scenario metadata.
-2. Determine whether the current point lies inside the viability region.
-3. Update temporal counters for time spent inside or outside viability.
-4. Compute a recovery score based on whether out-of-range variables are moving back toward viability.
-5. Compute raw instantaneous scores for all six labels from the current state and local dynamics.
-6. Apply static-parameter and scenario-based score modifiers to those raw scores.
-7. Select the highest-scoring provisional label.
-8. Apply temporal safety rules, especially near viability boundaries.
-9. Apply transition restrictions and hysteresis.
-10. Emit the final label and update memory.
+This memory is used only to stabilize label transitions over time.
 
-## The six labels
+### 2. Viability-membership tracking
 
-### Apoptosis
+The temporal classifier computes whether the current point lies inside the viability bounds:
 
-Represents persistent failure, severe stress, or nonviability. It is designed to be conservative both when entered and when exited.
+```python
+_inside_viability(C, T, E, O, bounds)
+```
 
-### Migration
+This is **not** used to redefine taxonomy labels. It is used only to detect whether a point has spent several sampled steps outside the admissible region.
 
-Represents a motile, high-tension, actively moving or remodeling state. It is favored when tension and matrix-related dynamics suggest directed activity.
+### 3. Recovery score
 
-### Proliferation
+The temporal wrapper computes a simple recovery score based on whether an out-of-bounds variable is moving back toward its admissible range.
 
-Represents growth-supportive dynamics inside a viable region. It is favored when the state is balanced, supported, and trending upward in constructive variables.
+Examples:
 
-### Quiescence
+- if `C < C_min` but `dC > 0`, recovery increases,
+- if `O < O_min` but `dO > 0`, recovery increases,
+- if `T > T_max` but `dT < 0`, recovery increases.
 
-Represents a viable but dynamically quiet regime. It is favored when derivatives are small and the system sits in a stable part of the viable box.
+This score is not a taxonomy rule. It is only a temporal hint used to avoid prematurely locking a state into a terminal interpretation while it is still recovering.
 
-### Diversification
+### 4. Grace period for transient excursions
 
-Represents remodeling, branching, or structurally changing behavior. It is favored when the matrix and tension are evolving in a viable environment without mapping cleanly to pure migration or pure growth.
+When a trajectory has only recently moved outside viability bounds and is already showing recovery, the temporal wrapper may temporarily output `Undetermined` rather than immediately forcing a strong state conclusion.
 
-### Undetermined
+This prevents brief excursions from being overinterpreted.
 
-Represents ambiguity, transitional behavior, weak evidence, buffering after perturbation, or deliberately delayed commitment. It acts as a neutral safe state.
+### 5. Persistence requirement for state switching
 
-## Memory context and signature
+A new candidate label is not always accepted immediately. If the candidate differs from the current temporal label, the wrapper requires short recent support before switching.
 
-The classifier does not keep one global state for all trajectories. Instead, it builds a memory key from:
+This is a temporal smoothing rule, not a taxonomy-definition rule.
 
-- the scenario label;
-- the scenario parameter `p`;
-- the sorted contents of the static parameter dictionary.
+### 6. Sticky handling of sustained apoptosis
 
-This means temporal memory is partitioned by scenario and parameter context. Two trajectories that differ in scenario identity or static parameter values do not share the same short-term classification memory.
+Once sustained apoptosis has been established, the temporal wrapper keeps the label unless the trajectory shows sufficiently strong recovery and re-entry toward viable behavior.
 
-This memory context is important, but it is not the same thing as score influence. The current revised version uses static parameters in two ways:
+This reflects the idea that terminal collapse should be harder to reverse at the label level than ordinary mode switching.
 
-- to define memory separation;
-- to modulate the biological scores themselves.
+## Explicit separation of taxonomy and viability
 
-## Internal memory state
+A central design requirement is that taxonomy and viability remain separate.
 
-Each memory context stores:
+- **Taxonomy** answers: what biological mode does the current state most resemble?
+- **Viability** answers: is the current state inside the admissible bounds?
 
-- `last_label`
-- `dwell_count`
-- `outside_count`
-- `inside_count`
-- `history`
+The temporal classifier preserves that separation by using the static taxonomy classifier as the source of biological labels and using viability membership only as a temporal-stability signal.
 
-### `last_label`
+Viability does **not** directly assign Apoptosis, Migration, Proliferation, Quiescence, or Diversification. It only helps the temporal wrapper decide whether a label should be stabilized, delayed, or temporarily replaced by `Undetermined` during transient excursions.
 
-The most recent emitted label.
+## Temporal decision workflow
 
-### `dwell_count`
+The temporal classifier follows this sequence.
 
-How many consecutive classification steps the current emitted label has persisted.
+1. Compute the base instantaneous taxonomy label using the static classifier.
+2. Compute whether the state is inside viability bounds.
+3. Compute the recovery score.
+4. Apply explicit temporal wrapper rules:
+   - grace outside bounds,
+   - recovery-aware suppression of premature apoptosis,
+   - persistence requirement for label switching,
+   - sticky sustained apoptosis.
+5. Update temporal memory.
+6. Return the final temporal label.
 
-### `outside_count`
+## Temporal pseudocode
 
-How many consecutive steps the trajectory has remained outside the viability region.
+```python
+base_label = classify_static_state(...)
+inside = inside_viability(...)
+recovery = recovery_score(...)
 
-### `inside_count`
+candidate = base_label
 
-How many consecutive steps the trajectory has remained inside the viability region.
+if transiently_outside_bounds and recovering and base_label != "Apoptosis":
+    candidate = "Undetermined"
 
-### `history`
+if base_label == "Apoptosis":
+    if inside_bounds:
+        candidate = "Undetermined"
+    elif outside_duration_is_short and recovering:
+        candidate = "Undetermined"
 
-A short deque of recent candidate labels. This stores proposed state changes, even when they are not yet accepted as final.
+if last_temporal_label == "Apoptosis":
+    if still_outside_bounds or weak_recovery:
+        final = "Apoptosis"
+    else:
+        final = "Undetermined"
+else:
+    if candidate_is_supported_by_recent_history:
+        final = candidate
+    else:
+        final = previous_label_or_candidate
 
-## Viability logic
+update_memory()
+return final
+```
 
-A point is viable if all of the following are true:
+This pseudocode should be read as a wrapper around the static classifier, not as a replacement classifier.
 
-- `C` is above its lower bound;
-- `T` is between its lower and upper bounds;
-- `E` is between its lower and upper bounds;
-- `O` is above its lower bound.
+## Relationship to the previous temporal implementation
 
-If all conditions hold, the point is inside viability. Otherwise it is outside viability.
+This rewritten temporal classifier intentionally avoids the problems of the earlier temporal implementation.
 
-This binary result influences the classifier in multiple ways:
+It does **not**:
 
-- it contributes directly to some class scores;
-- it updates the inside and outside counters;
-- it affects grace periods;
-- it affects apoptosis entry and exit rules.
+- construct a new per-label score system,
+- redefine label semantics through generic parameter multipliers,
+- mix taxonomy definition and viability scoring into a single opaque decision layer,
+- replace the explicit rule structure of the static classifier.
 
-## Recovery score
+Instead, it inherits the already clarified static taxonomy and adds only explicit temporal consistency rules.
 
-The recovery score measures whether the current trajectory is moving back toward viability.
+## Solution-level use
 
-A variable contributes to recovery when it is currently on the wrong side of a viability threshold but its derivative points inward:
+The temporal classifier also provides a `classify_solution(...)` helper.
 
-- low `C` with positive `dC`;
-- low `T` with positive `dT`;
-- high `T` with negative `dT`;
-- low `E` with positive `dE`;
-- high `E` with negative `dE`;
-- low `O` with positive `dO`.
+That function:
 
-Each such recovery-consistent condition contributes one unit. The recovery score is therefore a directional measure rather than a distance measure.
+1. computes derivatives from the full trajectory,
+2. samples evenly spaced trajectory points,
+3. applies the temporal point classifier in sequence,
+4. returns the majority temporal label.
 
-This score helps distinguish active correction from passive deterioration.
+This preserves the same sampling-based trajectory summary style already used in the static classifier ecosystem, while making the temporal additions explicit and limited.
 
-## Instantaneous scoring: primary layer
+## Recommended interpretation
 
-The primary instantaneous layer computes raw scores for all six labels using only current state geometry and local derivatives.
+The correct interpretation of this temporal classifier is:
 
-### Geometric reference values
+- the **static classifier** defines what each biological label means,
+- the **temporal wrapper** decides how quickly those labels are allowed to change across sampled trajectory points,
+- the **viability checks** contribute only to temporal caution and recovery handling, not to taxonomy semantics themselves.
 
-The classifier derives these helper quantities from the viability bounds:
-
-- `T_mid`, midpoint of the viable tension interval;
-- `T_span`, width of the viable tension interval;
-- `E_mid`, midpoint of the viable matrix interval;
-- `E_span`, width of the viable matrix interval.
-
-These quantities define what it means for `T` and `E` to be central, elevated, depressed, or extreme.
-
-### Stress decomposition
-
-The classifier computes six nonnegative stress components:
-
-- `low_C`
-- `low_O`
-- `low_T`
-- `high_T`
-- `low_E`
-- `high_E`
-
-Each component is zero inside the allowed interval and increases continuously as the variable moves outside its viability range. Their sum is the total stress level.
-
-### Apoptosis raw score
-
-Apoptosis increases with overall stress. It is further increased when:
-
-- `dC` is negative;
-- `dO` is negative;
-- the point lies outside viability.
-
-The intent is to favor apoptosis when the system is deprived, decaying, or structurally failing.
-
-### Migration raw score
-
-Migration measures a high-activity motile regime. It increases when:
-
-- `T` is above its midpoint;
-- `O` and `C` are sufficient;
-- `dT` is positive;
-- `dE` is positive;
-- `dC` is positive, with weaker weight;
-- `T` is elevated above the viable midpoint;
-- `E` is actively increasing.
-
-This score emphasizes dynamic motion-related behavior.
-
-### Proliferation raw score
-
-Proliferation is only favored in viable conditions. It increases when:
-
-- the point is inside viability;
-- oxygen and `C` are sufficient;
-- `T` lies in the viable interval;
-- `dC`, `dE`, or `dO` are positive;
-- `T` is near the midpoint of the viable tension interval;
-- `E` is near the midpoint of the viable matrix interval.
-
-This score favors balanced, constructive growth.
-
-### Quiescence raw score
-
-Quiescence increases when:
-
-- the point is inside viability;
-- the total derivative magnitude is small;
-- `T` is close to its viable midpoint;
-- all four derivatives are very small simultaneously.
-
-The derivative term is passed through an exponential decay, so quiescence rises as the dynamics become quieter.
-
-### Diversification raw score
-
-Diversification increases when:
-
-- the point is inside viability;
-- `E` is at or above the midpoint of the viable matrix interval;
-- oxygen is sufficient;
-- matrix dynamics are active;
-- tension dynamics are also active;
-- `dE` is positive while `T` is changing meaningfully.
-
-This creates a score for structured remodeling rather than stillness or simple growth.
-
-### Undetermined raw score
-
-Undetermined starts from a baseline and gains strength when:
-
-- the point is outside viability;
-- no other label has become decisively supported.
-
-This allows the classifier to preserve ambiguity instead of overcommitting.
-
-## Instantaneous scoring: secondary parameter layer
-
-The updated classifier now adds a second instantaneous layer that uses static parameters and scenario metadata as score modifiers.
-
-This does not replace the biological dynamic logic. Instead, it rescales the raw class scores after they are computed. The purpose is to let static context bias the classification toward some phenotypes and away from others while keeping the temporal machinery intact.
-
-## Parameter extraction strategy
-
-The classifier reads static signals from `par` and `scenario_cfg` using a tolerant lookup scheme.
-
-From `scenario_cfg`, it reads:
-
-- `p`
-- `expected`
-
-From `par`, it attempts to read these biological tendencies, with fallbacks for alternate names:
-
-- adhesion, falling back to `alpha`
-- motility, falling back to `m`
-- growth, falling back to `g`
-- oxygen support, falling back to `o`
-- remodeling, falling back to `r`
-- stress, falling back to `s`
-
-If a key is missing, a neutral default of `1.0` is used.
-
-This makes the classifier robust to slightly different parameter naming conventions.
-
-## Meaning of the static modifiers
-
-The secondary parameter layer constructs multiplicative modifiers for each output class.
-
-### Migration modifier
-
-Migration is increased by:
-
-- motility gain above neutral;
-- positive scenario parameter `p`.
-
-This means a system configured for stronger motility or more migration-favoring scenario structure will amplify the migration score.
-
-### Proliferation modifier
-
-Proliferation is increased by:
-
-- growth support above neutral;
-- oxygen support above neutral;
-- adhesion above neutral.
-
-This reflects the idea that a more growth-supportive and better-supported static environment should bias the classifier toward proliferative interpretations when the dynamics are compatible.
-
-### Quiescence modifier
-
-Quiescence is increased by stronger adhesion and mildly decreased by higher motility.
-
-This means quiescence becomes more likely in statically stabilizing environments and less likely in environments predisposed toward movement.
-
-### Diversification modifier
-
-Diversification is increased by stronger remodeling support and also mildly by larger `p`.
-
-This gives structural remodeling parameters a direct role in phenotype interpretation.
-
-### Apoptosis modifier
-
-Apoptosis is increased by stronger stress support and mildly decreased by stronger oxygen support.
-
-This allows the same dynamic state to be interpreted as more or less failure-prone depending on static system fragility or resilience.
-
-### Undetermined modifier
-
-Undetermined is not heavily shaped by the static parameter dictionary itself, but it can still be affected by scenario expectations.
-
-## Scenario-expectation modifiers
-
-In addition to generic static parameters, the classifier uses the scenario’s expected regime as a weak contextual prior.
-
-### Unstable scenarios
-
-If `expected` is `unstable`, the classifier:
-
-- boosts apoptosis;
-- mildly boosts undetermined;
-- slightly suppresses quiescence;
-- slightly suppresses proliferation.
-
-This makes unstable scenarios more failure-prone and less likely to settle too easily into calm labels.
-
-### Boundary or borderline scenarios
-
-If `expected` is `boundary` or `borderline`, the classifier:
-
-- boosts undetermined;
-- mildly boosts diversification;
-- mildly boosts apoptosis.
-
-This encourages ambiguity and transitional interpretations near regime boundaries.
-
-### Stable scenarios
-
-If `expected` is `stable`, the classifier:
-
-- boosts quiescence;
-- boosts proliferation;
-- suppresses apoptosis.
-
-This gives stable scenarios a contextual prior toward viability-preserving states.
-
-## Why multiplicative modulation is used
-
-The static parameter layer acts multiplicatively rather than additively. This has three advantages:
-
-- it preserves the relative structure of the dynamic score layer;
-- it does not manufacture a phenotype from zero evidence;
-- it lets static context strengthen or weaken an already supported interpretation.
-
-In other words, static parameters tilt the competition among labels rather than replacing the biological evidence from the current state.
-
-## Candidate selection
-
-After primary raw scores are computed and static modifiers are applied, the classifier chooses the highest-scoring label as the provisional candidate.
-
-This candidate is still not final. The temporal arbitration layer can replace it.
-
-## Grace rules near boundaries
-
-The classifier includes explicit grace rules to avoid premature commitment after brief exits from the viability region.
-
-Two rules are used.
-
-### First grace rule
-
-If the point is outside viability, the previous final label is `Undetermined`, and the current label has not persisted long enough, the candidate is forced to `Undetermined`.
-
-This avoids immediate overinterpretation at the beginning of a trajectory or just after a disturbance.
-
-### Second grace rule
-
-If the point is outside viability for only a short time and the recovery score is already positive, the candidate is also forced to `Undetermined`.
-
-This means a brief boundary excursion with inward-pointing dynamics is interpreted as unresolved rather than failed.
-
-## Conservative apoptosis entry
-
-Even if apoptosis wins the score competition, it still must satisfy extra temporal rules.
-
-If the candidate is apoptosis:
-
-- and the point is inside viability, apoptosis is rejected;
-- or if the point is outside viability but not for long enough and recovery is present, apoptosis is downgraded to `Undetermined`.
-
-So apoptosis is never entered on one alarming point alone.
-
-## Sticky apoptosis exit
-
-Once the last emitted label is apoptosis, the classifier becomes very conservative about leaving it.
-
-It remains in apoptosis unless both conditions hold:
-
-- the current point is inside viability;
-- the recovery score is sufficiently strong.
-
-Even then, it does not jump directly into a specific healthy phenotype. It first returns to `Undetermined`.
-
-This creates a biologically cautious buffer between failure and recovery.
-
-## Allowed transition graph
-
-For all non-apoptotic states, the classifier checks whether a proposed transition is allowed from the previous final label.
-
-The transition map is intentionally structured.
-
-- `Undetermined` may move to any label.
-- `Quiescence` may move to migration, proliferation, diversification, undetermined, or apoptosis.
-- `Migration` may move to diversification, quiescence, undetermined, or apoptosis.
-- `Proliferation` may move to diversification, quiescence, undetermined, or apoptosis.
-- `Diversification` may move to migration, proliferation, quiescence, undetermined, or apoptosis.
-- `Apoptosis` may only remain apoptosis or move to undetermined.
-
-If a candidate transition is forbidden, the candidate is replaced by the previous final label.
-
-## Hysteresis and persistence
-
-Even allowed transitions must persist before they are accepted.
-
-If the candidate differs from the previous final label, the classifier counts how often that candidate appears in recent candidate history.
-
-- If the candidate appears often enough, the switch is accepted.
-- Otherwise, the classifier keeps the previous final label.
-
-This creates hysteresis: regime changes need repeated evidence rather than a single fluctuation.
-
-## Final memory update
-
-After the final label has been determined, memory is updated.
-
-- If the final label matches the previous final label, `dwell_count` increases.
-- Otherwise `dwell_count` resets to one.
-- `last_label` is updated.
-- The provisional candidate is appended to the history deque.
-
-The next classification call will interpret the state through this updated context.
-
-## Why the history stores candidates
-
-The history buffer stores provisional candidates rather than only final labels. This is a crucial design choice.
-
-A label can repeatedly win the instantaneous competition but still be blocked temporarily by hysteresis. By storing candidates, the classifier allows a new regime to accumulate evidence across time until the switch threshold is met.
-
-Without this mechanism, the classifier would become too inert and transitions would be excessively delayed.
-
-## Interaction between dynamic and static layers
-
-The revised classifier should be interpreted as a dynamic scorer modulated by static context.
-
-- The dynamic layer asks: what phenotype is supported by the current state and local direction of change?
-- The static layer asks: given the scenario and parameter regime, which of those biologically plausible phenotypes should be comparatively more favored?
-- The temporal layer asks: has that interpretation persisted long enough to be trusted?
-
-This three-level architecture is the core logic of the revised classifier.
-
-## Practical interpretation
-
-A label emitted by this classifier means more than a pointwise threshold crossing.
-
-- `Apoptosis` means sustained nonviability, reinforced by temporal persistence and insufficient recovery.
-- `Migration` means dynamic motility-compatible behavior, possibly strengthened by motility-related static parameters.
-- `Proliferation` means viable growth-compatible behavior, possibly strengthened by growth, oxygen, and adhesion support.
-- `Quiescence` means stable viable behavior, especially in statically stabilizing contexts.
-- `Diversification` means viable remodeling behavior, especially when remodeling-support parameters are strong.
-- `Undetermined` means ambiguity, early recovery, boundary behavior, or temporal buffering.
-
-## Reset behavior
-
-The classifier exposes `reset_classifier_memory()` for situations where a new independent trajectory or batch should not inherit temporal context from a previous one.
-
-This reset should be called whenever continuity across trajectories is not intended.
-
-## Decision flow summary
-
-For each time point, the classifier performs this sequence:
-
-1. Build the scenario-parameter signature.
-2. Retrieve the corresponding memory state.
-3. Determine whether the current point lies inside viability.
-4. Update inside and outside counters.
-5. Compute the recovery score.
-6. Compute raw dynamic scores for all labels.
-7. Compute static and scenario-based score modifiers.
-8. Multiply raw scores by those modifiers.
-9. Select the provisional candidate.
-10. Apply outside-boundary grace rules.
-11. Apply apoptosis-entry safeguards.
-12. Apply sticky apoptosis-exit logic.
-13. Enforce the allowed transition graph.
-14. Apply hysteresis using recent candidate history.
-15. Emit the final label.
-16. Update memory.
-
-## Conceptual summary
-
-The revised temporal classifier is not simply a temporal smoother and not simply a rule-based scorer. It is a three-part decision architecture:
-
-- a primary biological scoring layer based on current state and derivatives;
-- a secondary contextual modulation layer based on static parameters and expected scenario regime;
-- a temporal arbitration layer based on persistence, recovery, hysteresis, and transition structure.
-
-That combination allows the classifier to remain sensitive to current dynamics, aware of static context, and resistant to noisy label flicker.
+That separation keeps the code readable, auditable, and faithful to the current static classifier philosophy.
