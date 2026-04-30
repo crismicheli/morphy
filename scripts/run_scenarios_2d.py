@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 import matplotlib.pyplot as plt
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import runscenario
+from viabilitykernels.simulation import run_scenario
 from plotting.plot2d_helpers import print_summary_table, save_all_scenarios_figure
 
 
