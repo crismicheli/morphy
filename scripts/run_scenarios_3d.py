@@ -117,9 +117,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         default=None,
-        help="Optional output directory. Defaults to figures/_sweep_3d.",
+        help="Optional output directory. Defaults to figures/<class>_sweep_3d.",
     )
     return parser.parse_args()
+
+
+def confirm_overwrite_dir(path: Path) -> bool:
+    if not path.exists():
+        return True
+    reply = input(f"Directory {path} already exists. Overwrite contents? [y/N] ").strip().lower()
+    return reply in {"y", "yes"}
 
 
 def main() -> None:
@@ -133,6 +140,9 @@ def main() -> None:
     regimes = ["inside", "inside_near_boundary", "outside_near_boundary"]
 
     out_dir = Path(args.out_dir) if args.out_dir else ROOT / "figures" / f"{scenario_class}_sweep_3d"
+    if not confirm_overwrite_dir(out_dir):
+        print("Aborted: not overwriting existing directory.")
+        return
     out_dir.mkdir(parents=True, exist_ok=True)
 
     total_ensemble_runs = 0
@@ -140,8 +150,9 @@ def main() -> None:
         for regime in regimes:
             result = run_regime_scenario(scenario, regime, n_traj=args.n_traj)
             slug = scenario_slug(scenario["label"])
-            plot_path = out_dir / f"{slug}_{regime}_taxonomy_3d.png"
-            anim_path = out_dir / f"{slug}_{regime}_3d.gif"
+            clf_tag = f"clf-{args.classifier_type}"
+            plot_path = out_dir / f"{slug}_{regime}_taxonomy_3d_{clf_tag}.png"
+            anim_path = out_dir / f"{slug}_{regime}_3d_{clf_tag}.gif"
 
             save_taxonomy_plot(
                 result,
