@@ -12,7 +12,7 @@ for p in (str(PACKAGEPARENT), str(REPOROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot_helpers import save_taxonomy_plot
 from plotting.scenario_helpers import choose_scenario, run_single_scenario
 from classifiers.classifier_dispatch import get_classifier_components
@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
     p.add_argument("--output", default=str(REPOROOT / "figures" / "taxonomy_trajectory_states_3d.png"), help="Output figure path.")
     p.add_argument("--classifier-type", choices=["static", "temporal", "state_machine"], default="static", help="Classifier backend.")
-    p.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories.")
+    p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
     p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
     p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
     p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
@@ -44,8 +44,8 @@ def main() -> None:
         result,
         scenario,
         output_path,
-        bounds=DEFAULTBOUNDS,
-        par=DEFAULTPARAMS,
+        bounds=DEFAULT_BOUNDS,
+        par=DEFAULT_PARAMS,
         classifier_fn=classifier_fn,
         color_map=state_colors,
         stride=args.stride,
