@@ -37,7 +37,7 @@ def warn_if_any_initial_conditions_outside(initial_conditions, bounds: Dict) -> 
 
 
 def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, shift_E: float = 1.0, shift_O: float = 1.0) -> Tuple[np.ndarray, Tuple[float, float, float, float], list]:
-    x0_center = np.array(DEFAULTSIM["x0_center"], dtype=float)
+    x0_center = np.array(DEFAULT_SIM["x0_center"], dtype=float)
     noise_scale = (0.03, 0.03, 0.03, 0.05)
     expected = scenario.get("expected", "")
     if expected in {"borderline", "boundary"}:
@@ -55,7 +55,7 @@ def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 
         x0center=x0_center,
         ntraj=n_traj,
         noisescale=noise_scale,
-        rngseed=DEFAULTSIM["rng_seed"],
+        rngseed=DEFAULT_SIM["rng_seed"],
     )
     return x0_center, noise_scale, initial_conditions
 
@@ -64,16 +64,16 @@ def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, sh
     x0_center, noise_scale, initial_conditions = compute_initial_conditions(
         scenario, n_traj=n_traj, shift_T=shift_T, shift_E=shift_E, shift_O=shift_O
     )
-    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULTBOUNDS)
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
     result = run_scenario(
         scenariocfg=scenario,
-        par=DEFAULTPARAMS,
-        bounds=DEFAULTBOUNDS,
+        par=DEFAULT_PARAMS,
+        bounds=DEFAULT_BOUNDS,
         x0center=x0_center,
         ntraj=n_traj,
-        tspan=tuple(DEFAULTSIM["t_span"]),
-        neval=DEFAULTSIM["n_eval"],
-        rngseed=DEFAULTSIM["rng_seed"],
+        tspan=tuple(DEFAULT_SIM["t_span"]),
+        neval=DEFAULT_SIM["n_eval"],
+        rngseed=DEFAULT_SIM["rng_seed"],
         noisescale=noise_scale,
         initialconditions=initial_conditions,
     )
