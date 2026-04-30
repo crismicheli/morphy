@@ -9,7 +9,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 
-from viabilitykernels.phaseplane import ETfield, makegrid, plotallscenarios
+from viabilitykernels.phase_plane import ETfield, makegrid, plotallscenarios
 
 INSIDE_COLOR = "#2166ac"
 OUTSIDE_COLOR = "#d73027"
