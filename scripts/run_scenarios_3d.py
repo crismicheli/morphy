@@ -43,14 +43,14 @@ def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, flo
 
 def run_regime_scenario(scenario: dict, regime: str, *, n_traj: int):
     x0_center, noise_scale = make_regime_center(regime)
-    initial_conditions = sampleinitialconditions(
+    initial_conditions = sample_initial_conditions(
         x0center=x0_center,
         ntraj=n_traj,
         noisescale=noise_scale,
         rngseed=DEFAULT_SIM["rng_seed"],
     )
     warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
-    result = runscenario(
+    result = run_scenario(
         scenariocfg=scenario,
         par=DEFAULT_PARAMS,
         bounds=DEFAULT_BOUNDS,
