@@ -5,7 +5,7 @@
 ```bash
 python animate_scenario_3d.py --filter "Intermediate porosity"
 python animate_scenario_3d.py --filter "Intermediate porosity" --show-box --c-stat median
-python animate_scenario_3d.py --filter "Unstable" --fps 12 --max-frames 200 --elev 30 --azim -45
+python animate_scenario_3d.py --filter "Unstable" --fps 12 --max-frames 120 --elev 30 --azim -45
 ```
 
 This script generates a 3D animated GIF for one selected scenario in the E-T-O phenotype space. It selects the scenario, runs a single-scenario ensemble simulation through the shared scenario helper, and sends the result to `plotting.plot_helpers.save_trajectory_animation`.
