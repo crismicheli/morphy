@@ -6,8 +6,8 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM, SCENARIOS
-from viabilitykernels.simulation import runscenario, sampleinitialconditions
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM, SCENARIOS
+from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 
 
 def choose_scenario(keyword: str) -> Dict:
