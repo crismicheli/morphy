@@ -67,7 +67,7 @@ def classify_all_points(sol, classifier_fn: Callable, color_map: Dict[str, str],
     for i in range(0, sol.y.shape[1], stride):
         C, T, E, O = (float(v) for v in sol.y[:, i])
         dC, dT, dE, dO = (float(v) for v in dydt[:, i])
-        label = classifier_fn(C, T, E, O, dC, dT, dE, dO, bounds=bounds, par=par, scenariocfg=scenario_cfg)
+        label = classifier_fn(C, T, E, O, dC, dT, dE, dO, bounds=bounds, par=par, scenario_cfg=scenario_cfg)
         snapshots.append({"t": float(sol.t[i]), "C": C, "T": T, "E": E, "O": O, "label": label, "color": color_map[label]})
     return snapshots
 
