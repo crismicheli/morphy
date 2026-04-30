@@ -1,17 +1,17 @@
 # Scenarios Sweep Plots
 
-This note describes the dependencies and execution logic of `scenarios_sweep.py`, which runs a batch sweep over all scenarios belonging to one expected class and produces both taxonomy-colored 3D scatter plots and E-T-O trajectory animations.
+This note describes the dependencies and execution logic of `run_scenarios_3d.py`, which runs a batch sweep over all scenarios belonging to one expected class and produces both taxonomy-colored 3D scatter plots and E-T-O trajectory animations.
 
 ## Example calls
 
 Typical calls look like this:
 
 ```bash
-python scenarios_sweep_plots.py unstable
+python run_scenarios_3d.py unstable
 
-python scenarios_sweep_plots.py boundary   --classifier-type temporal   --show-box
+python run_scenarios_3d.py boundary   --classifier-type temporal   --show-box
 
-python scenarios_sweep_plots.py stable   --classifier-type state_machine   --n-traj 40   --stride 4   --fps 12   --max-frames 160
+python run_scenarios_3d.py stable   --classifier-type state_machine   --n-traj 40   --stride 4   --fps 12   --max-frames 160
 ```
 
 These runs all follow the same sweep workflow, but they can change the classifier backend, trajectory count, taxonomy-point subsampling, animation settings, and output location.
@@ -42,4 +42,4 @@ The animation is generated through `plotting.plot_helpers.save_trajectory_animat
 
 ## Practical design rationale
 
-The workflow is organized into reusable layers: sweep-specific orchestration in `scenarios_sweep.py`, scenario and viability utilities in `scenario_helpers`, classifier selection in `classifier_dispatch`, and visualization in `plot_helpers`. This keeps the sweep script independent as a runnable batch entry point while allowing it to share the same implementation backbone as the single-scenario plotting scripts.
+The workflow is organized into reusable layers: sweep-specific orchestration in `run_scenarios_3d.py`, scenario and viability utilities in `scenario_helpers`, classifier selection in `classifier_dispatch`, and visualization in `plot_helpers`. This keeps the sweep script independent as a runnable batch entry point while allowing it to share the same implementation backbone as the single-scenario plotting scripts.
