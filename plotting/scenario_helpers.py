@@ -24,7 +24,7 @@ def scenario_slug(label: str) -> str:
 
 def is_inside_viability_box(x0: np.ndarray, bounds: Dict) -> bool:
     C, T, E, O = (float(v) for v in x0)
-    return bounds["Cmin"] <= C and bounds["Tmin"] <= T <= bounds["Tmax"] and bounds["Emin"] <= E <= bounds["Emax"] and O >= bounds["Omin"]
+    return bounds["C_min"] <= C and bounds["T_min"] <= T <= bounds["T_max"] and bounds["E_min"] <= E <= bounds["E_max"] and O >= bounds["O_min"]
 
 
 def warn_if_any_initial_conditions_outside(initial_conditions, bounds: Dict) -> None:
