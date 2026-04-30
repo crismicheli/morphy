@@ -46,6 +46,13 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def confirm_overwrite(path: Path) -> bool:
+    if not path.exists():
+        return True
+    reply = input(f"File {path} already exists. Overwrite? [y/N] ").strip().lower()
+    return reply in {"y", "yes"}
+
+
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
@@ -64,9 +71,13 @@ def main() -> None:
             output_path = REPO_ROOT / output_path
     else:
         slug = scenario_slug(result["label"])
-        output_path = REPO_ROOT / "figures" / f"{slug}_taxonomy_3d.png"
+        output_path = REPO_ROOT / "figures" / f"{slug}_taxonomy_3d_clf-{args.classifier_type}.png"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not confirm_overwrite(output_path):
+        print("Aborted: not overwriting existing file.")
+        return
 
     save_taxonomy_plot(
         result,
