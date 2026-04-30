@@ -12,7 +12,7 @@ for p in (str(PACKAGEPARENT), str(REPOROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot_helpers import save_taxonomy_plot, save_trajectory_animation
 from plotting.scenario_helpers import choose_scenario, run_single_scenario, scenario_slug
 from classifiers.classifier_dispatch import get_classifier_components
@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", default=str(REPOROOT / "figures" / "scenario_single_outputs"), help="Output directory.")
     parser.add_argument("--prefix", default=None, help="Optional filename prefix; defaults to scenario label slug.")
     parser.add_argument("--classifier-type", choices=["static", "temporal", "state_machine"], default="temporal", help="Classifier backend.")
-    parser.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories.")
+    parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
     parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
     parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
     parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
@@ -51,7 +51,7 @@ def main() -> None:
     save_trajectory_animation(
         result,
         animation_path,
-        bounds=DEFAULTBOUNDS,
+        bounds=DEFAULT_BOUNDS,
         fps=args.fps,
         max_frames=args.max_frames,
         elev=args.elev,
@@ -63,8 +63,8 @@ def main() -> None:
         result,
         scenario,
         taxonomy_path,
-        bounds=DEFAULTBOUNDS,
-        par=DEFAULTPARAMS,
+        bounds=DEFAULT_BOUNDS,
+        par=DEFAULT_PARAMS,
         classifier_fn=classifier_fn,
         color_map=state_colors,
         stride=args.stride,
