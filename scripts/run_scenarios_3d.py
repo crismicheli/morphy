@@ -47,18 +47,18 @@ def run_regime_scenario(scenario: dict, regime: str, *, n_traj: int):
         x0center=x0_center,
         ntraj=n_traj,
         noisescale=noise_scale,
-        rngseed=DEFAULTSIM["rng_seed"],
+        rngseed=DEFAULT_SIM["rng_seed"],
     )
-    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULTBOUNDS)
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
     result = runscenario(
         scenariocfg=scenario,
-        par=DEFAULTPARAMS,
-        bounds=DEFAULTBOUNDS,
+        par=DEFAULT_PARAMS,
+        bounds=DEFAULT_BOUNDS,
         x0center=x0_center,
         ntraj=n_traj,
-        tspan=tuple(DEFAULTSIM["t_span"]),
-        neval=DEFAULTSIM["n_eval"],
-        rngseed=DEFAULTSIM["rng_seed"],
+        tspan=tuple(DEFAULT_SIM["t_span"]),
+        neval=DEFAULT_SIM["n_eval"],
+        rngseed=DEFAULT_SIM["rng_seed"],
         noisescale=noise_scale,
         initialconditions=initial_conditions,
     )
@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sweep scenarios by expected class and generate taxonomy plots plus 3D ETO animations.")
     parser.add_argument("scenario_class", help="Scenario expected class to sweep, e.g. unstable, boundary, or stable.")
     parser.add_argument("--classifier-type", choices=["static", "temporal", "state_machine"], default="static", help="Classifier backend for taxonomy plots.")
-    parser.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories per sweep run.")
+    parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories per sweep run.")
     parser.add_argument("--stride", type=int, default=8, help="Subsample factor for taxonomy plot timepoints.")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second for animations.")
     parser.add_argument("--max-frames", type=int, default=120, help="Maximum number of animation frames.")
@@ -99,8 +99,8 @@ def main() -> None:
                 result,
                 scenario,
                 plot_path,
-                bounds=DEFAULTBOUNDS,
-                par=DEFAULTPARAMS,
+                bounds=DEFAULT_BOUNDS,
+                par=DEFAULT_PARAMS,
                 classifier_fn=classifier_fn,
                 color_map=state_colors,
                 stride=args.stride,
@@ -110,7 +110,7 @@ def main() -> None:
             save_trajectory_animation(
                 result,
                 anim_path,
-                bounds=DEFAULTBOUNDS,
+                bounds=DEFAULT_BOUNDS,
                 fps=args.fps,
                 max_frames=args.max_frames,
                 show_box=args.show_box,
