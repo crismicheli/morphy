@@ -19,7 +19,9 @@ from classifiers.classifier_dispatch import get_classifier_components
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate both a 3D trajectory animation and a taxonomy-labeled 3D plot for one scenario.")
+    parser = argparse.ArgumentParser(
+        description="Generate both a 3D trajectory animation and a taxonomy-labeled 3D plot for one scenario."
+    )
     parser.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
     parser.add_argument("--out-dir", default=str(REPOROOT / "figures" / "scenario_single_outputs"), help="Output directory.")
     parser.add_argument("--prefix", default=None, help="Optional filename prefix; defaults to scenario label slug.")
@@ -41,13 +43,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
-    result = run_single_scenario(scenario, n_traj=args.n_traj, shift_T=args.shift_T, shift_E=args.shift_E, shift_O=args.shift_O)
+    result = run_single_scenario(
+        scenario,
+        n_traj=args.n_traj,
+        shift_T=args.shift_T,
+        shift_E=args.shift_E,
+        shift_O=args.shift_O,
+    )
     classifier_fn, reset_fn, state_colors = get_classifier_components(args.classifier_type)
+
     outdir = Path(args.out_dir)
     outdir.mkdir(parents=True, exist_ok=True)
+
     prefix = args.prefix or scenario_slug(result["label"])
-    animation_path = outdir / f"{prefix}_eto_animation.gif"
+    animation_path = outdir / f"{prefix}_3d.gif"
     taxonomy_path = outdir / f"{prefix}_taxonomy_3d.png"
+
     save_trajectory_animation(
         result,
         animation_path,
@@ -73,6 +84,7 @@ def main() -> None:
         show_box=args.show_box,
         reset_fn=reset_fn,
     )
+
     print(f"Scenario: {result['label']}")
     print(f"Animation: {animation_path}")
     print(f"Taxonomy plot: {taxonomy_path}")
