@@ -1,114 +1,29 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import sys
 import argparse
-import warnings
+import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.animation import FuncAnimation, PillowWriter
-from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
-
-BOX_GREEN = "#4dac26"
-OUTSIDE_COLOR = "#d73027"
-INSIDE_COLOR = "#2166ac"
+from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM, SCENARIOS
+from viabilitykernels.simulation import runscenario, sampleinitialconditions
+from plotting.plot_helpers import save_taxonomy_plot, save_trajectory_animation
+from plotting.scenario_helpers import scenario_slug, warn_if_any_initial_conditions_outside
+from classifiers.classifier_dispatch import get_classifier_components
 
 
 def choose_scenarios(expected: str) -> list[dict]:
-    scenarios = [s for s in SCENARIOS if s.get("expected") == expected]
+    scenarios = [s for s in SCENARIOS if str(s.get("expected", "")).lower() == expected]
     if not scenarios:
         available = sorted({str(s.get("expected")) for s in SCENARIOS if s.get("expected") is not None})
-        raise ValueError(
-            f"No scenarios found for expected={expected!r}. Available values: {', '.join(available)}"
-        )
+        raise ValueError(f"No scenarios found for expected={expected!r}. Available values: {', '.join(available)}")
     return scenarios
-
-
-def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: float):
-    v000 = [e0, t0, o0]
-    v100 = [e1, t0, o0]
-    v110 = [e1, t1, o0]
-    v010 = [e0, t1, o0]
-    v001 = [e0, t0, o1]
-    v101 = [e1, t0, o1]
-    v111 = [e1, t1, o1]
-    v011 = [e0, t1, o1]
-    return [
-        [v000, v100, v110, v010],
-        [v001, v101, v111, v011],
-        [v000, v100, v101, v001],
-        [v010, v110, v111, v011],
-        [v000, v010, v011, v001],
-        [v100, v110, v111, v101],
-    ]
-
-
-def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
-    C, T, E, O = [float(v) for v in x0]
-    return (
-        C >= bounds["C_min"]
-        and bounds["T_min"] <= T <= bounds["T_max"]
-        and bounds["E_min"] <= E <= bounds["E_max"]
-        and O >= bounds["O_min"]
-    )
-
-
-def is_inside_eto_box(E: float, T: float, O: float, bounds: dict) -> bool:
-    return (
-        bounds["E_min"] <= E <= bounds["E_max"]
-        and bounds["T_min"] <= T <= bounds["T_max"]
-        and O >= bounds["O_min"]
-    )
-
-
-def warn_if_any_initial_conditions_outside(initial_conditions: list[np.ndarray], bounds: dict, tag: str) -> None:
-    outside = [x0 for x0 in initial_conditions if not is_inside_viability_box(x0, bounds)]
-    if outside:
-        warnings.warn(
-            f"{tag}: {len(outside)}/{len(initial_conditions)} initial conditions start outside the viability box. "
-            f"This is allowed, but please confirm that this is the intended behavior.",
-            stacklevel=2,
-        )
-
-
-def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8) -> list[dict]:
-    t = sol.t
-    y = sol.y
-    dt = max(1e-12, float(np.mean(np.diff(t))))
-    dydt = np.gradient(y, dt, axis=1)
-
-    snapshots = []
-    for i in range(0, y.shape[1], stride):
-        C, T, E, O = [float(v) for v in y[:, i]]
-        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        label = classify_state(
-            C, T, E, O, dC, dT, dE, dO,
-            bounds=bounds,
-            par=par,
-            scenario_cfg=scenario_cfg,
-        )
-        snapshots.append(
-            {
-                "t": float(t[i]),
-                "C": C,
-                "T": T,
-                "E": E,
-                "O": O,
-                "label": label,
-                "color": STATE_COLORS[label],
-            }
-        )
-    return snapshots
 
 
 def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, float, float]]:
@@ -126,233 +41,41 @@ def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, flo
     return center, noise
 
 
-def save_taxonomy_plot(result: dict, scenario_cfg: dict, output_path: Path, show_box: bool = True, stride: int = 8) -> None:
-    solutions = result["solutions"]
-    label = result["label"]
-    effective_par = result.get("effective_par", DEFAULT_PARAMS)
-
-    all_points = []
-    for sol in solutions:
-        all_points.extend(
-            classify_all_points(
-                sol,
-                bounds=DEFAULT_BOUNDS,
-                par=effective_par,
-                scenario_cfg=scenario_cfg,
-                stride=stride,
-            )
-        )
-
-    fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
-    ax = fig.add_subplot(111, projection="3d")
-
-    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.08)
-    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.08)
-    O_max_axis = 1.4
-
-    ax.set_xlim(0, E_max_axis)
-    ax.set_ylim(0, T_max_axis)
-    ax.set_zlim(0, O_max_axis)
-    ax.set_xlabel("ECM density E")
-    ax.set_ylabel("Cytoskeletal tension T")
-    ax.set_zlabel("Oxygen O")
-    ax.view_init(elev=24.0, azim=-58.0)
-    ax.grid(True, alpha=0.25)
-
-    if show_box:
-        faces = viability_faces(
-            DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"],
-            DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
-            DEFAULT_BOUNDS["O_min"], O_max_axis,
-        )
-        box = Poly3DCollection(
-            faces,
-            facecolors=BOX_GREEN,
-            edgecolors=BOX_GREEN,
-            linewidths=0.8,
-            alpha=0.08,
-        )
-        ax.add_collection3d(box)
-
-    for cls, color in STATE_COLORS.items():
-        pts = [p for p in all_points if p["label"] == cls]
-        if not pts:
-            continue
-        E = [p["E"] for p in pts]
-        T = [p["T"] for p in pts]
-        O = [p["O"] for p in pts]
-        ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=cls)
-
-    ax.set_title(
-        f"{label}\nAll trajectory points in 3D (E, T, O), colored by taxonomy state",
-        fontsize=13,
-        fontweight="bold",
+def run_regime_scenario(scenario: dict, regime: str, *, n_traj: int):
+    x0_center, noise_scale = make_regime_center(regime)
+    initial_conditions = sampleinitialconditions(
+        x0center=x0_center,
+        ntraj=n_traj,
+        noisescale=noise_scale,
+        rngseed=DEFAULTSIM["rng_seed"],
     )
-
-    legend = ax.legend(
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        frameon=True,
-        fontsize=10,
-        title="Taxonomy state",
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULTBOUNDS)
+    result = runscenario(
+        scenariocfg=scenario,
+        par=DEFAULTPARAMS,
+        bounds=DEFAULTBOUNDS,
+        x0center=x0_center,
+        ntraj=n_traj,
+        tspan=tuple(DEFAULTSIM["t_span"]),
+        neval=DEFAULTSIM["n_eval"],
+        rngseed=DEFAULTSIM["rng_seed"],
+        noisescale=noise_scale,
+        initialconditions=initial_conditions,
     )
-    legend.get_frame().set_facecolor("white")
-    legend.get_frame().set_alpha(0.95)
-    legend.get_frame().set_edgecolor("0.75")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=220)
-    plt.close(fig)
-
-
-def segment_colors_for_solution(sol, bounds: dict) -> list[str]:
-    E = sol.y[2]
-    T = sol.y[1]
-    O = sol.y[3]
-    colors = []
-    for i in range(len(sol.t) - 1):
-        inside = is_inside_eto_box(float(E[i + 1]), float(T[i + 1]), float(O[i + 1]), bounds)
-        colors.append(INSIDE_COLOR if inside else OUTSIDE_COLOR)
-    return colors
-
-
-def build_line_segments_3d(sol, frame: int):
-    E = sol.y[2][: frame + 1]
-    T = sol.y[1][: frame + 1]
-    O = sol.y[3][: frame + 1]
-    if len(E) < 2:
-        return np.empty((0, 2, 3))
-    points = np.column_stack([E, T, O])
-    return np.stack([points[:-1], points[1:]], axis=1)
-
-
-def save_eto_animation(result: dict, output_path: Path, fps: int = 10, max_frames: int = 180, show_box: bool = True) -> None:
-    solutions = result["solutions"]
-    label = result["label"]
-
-    n_time = min(len(solutions[0].t), max_frames)
-
-    fig = plt.figure(figsize=(8.6, 7.0), constrained_layout=True)
-    ax = fig.add_subplot(111, projection="3d")
-
-    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.08)
-    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.08)
-    O_max_axis = 1.4
-
-    ax.set_xlim(0, E_max_axis)
-    ax.set_ylim(0, T_max_axis)
-    ax.set_zlim(0, O_max_axis)
-    ax.set_xlabel("ECM density E")
-    ax.set_ylabel("Cytoskeletal tension T")
-    ax.set_zlabel("Oxygen O")
-    ax.view_init(elev=24.0, azim=-58.0)
-    ax.grid(True, alpha=0.25)
-
-    if show_box:
-        faces = viability_faces(
-            DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"],
-            DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
-            DEFAULT_BOUNDS["O_min"], O_max_axis,
-        )
-        box = Poly3DCollection(
-            faces,
-            facecolors=BOX_GREEN,
-            edgecolors=BOX_GREEN,
-            linewidths=0.8,
-            alpha=0.08,
-        )
-        ax.add_collection3d(box)
-
-    segment_color_lists = [segment_colors_for_solution(sol, DEFAULT_BOUNDS) for sol in solutions]
-    line_artists = []
-    point_artists = []
-    for sol in solutions:
-        seed_segments = np.array([
-            [
-                [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-                [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-            ]
-        ])
-        inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
-        line = Line3DCollection(seed_segments, linewidths=1.4, alpha=0.75)
-        line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
-        ax.add_collection3d(line)
-        point = ax.plot(
-            [float(sol.y[2][0])],
-            [float(sol.y[1][0])],
-            [float(sol.y[3][0])],
-            "o",
-            ms=4.5,
-            color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR,
-        )[0]
-        line_artists.append(line)
-        point_artists.append(point)
-
-    ax.set_title(f"{label}\nAnimated ensemble in 3D (E, T, O)", fontsize=13, fontweight="bold")
-
-    def init():
-        for sol, line, point in zip(solutions, line_artists, point_artists):
-            seed_segments = np.array([
-                [
-                    [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-                    [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-                ]
-            ])
-            line.set_segments(seed_segments)
-            inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
-            line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
-            point.set_data([float(sol.y[2][0])], [float(sol.y[1][0])])
-            point.set_3d_properties([float(sol.y[3][0])])
-            point.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
-        return [*line_artists, *point_artists]
-
-    def update(frame: int):
-        for sol, line, point, seg_colors in zip(solutions, line_artists, point_artists, segment_color_lists):
-            segments = build_line_segments_3d(sol, frame)
-            if len(segments) == 0:
-                seed_segments = np.array([
-                    [
-                        [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-                        [float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0])],
-                    ]
-                ])
-                line.set_segments(seed_segments)
-                inside0 = is_inside_eto_box(float(sol.y[2][0]), float(sol.y[1][0]), float(sol.y[3][0]), DEFAULT_BOUNDS)
-                line.set_color([INSIDE_COLOR if inside0 else OUTSIDE_COLOR])
-            else:
-                line.set_segments(segments)
-                line.set_color(seg_colors[: len(segments)])
-            E_now = float(sol.y[2][frame])
-            T_now = float(sol.y[1][frame])
-            O_now = float(sol.y[3][frame])
-            point.set_data([E_now], [T_now])
-            point.set_3d_properties([O_now])
-            point.set_color(INSIDE_COLOR if is_inside_eto_box(E_now, T_now, O_now, DEFAULT_BOUNDS) else OUTSIDE_COLOR)
-        return [*line_artists, *point_artists]
-
-    anim = FuncAnimation(
-        fig,
-        update,
-        init_func=init,
-        frames=n_time,
-        interval=1000 / max(fps, 1),
-        blit=False,
-    )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = PillowWriter(fps=fps)
-    anim.save(output_path, writer=writer)
-    plt.close(fig)
+    result["regime"] = regime
+    return result
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Sweep scenarios by expected class (e.g. unstable, boundary, stable)."
-    )
-    parser.add_argument(
-        "scenario_class",
-        help="Scenario expected class to sweep, e.g. unstable, boundary, or stable.",
-    )
+    parser = argparse.ArgumentParser(description="Sweep scenarios by expected class and generate taxonomy plots plus 3D ETO animations.")
+    parser.add_argument("scenario_class", help="Scenario expected class to sweep, e.g. unstable, boundary, or stable.")
+    parser.add_argument("--classifier-type", choices=["static", "temporal", "state_machine"], default="static", help="Classifier backend for taxonomy plots.")
+    parser.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories per sweep run.")
+    parser.add_argument("--stride", type=int, default=8, help="Subsample factor for taxonomy plot timepoints.")
+    parser.add_argument("--fps", type=int, default=10, help="Frames per second for animations.")
+    parser.add_argument("--max-frames", type=int, default=120, help="Maximum number of animation frames.")
+    parser.add_argument("--show-box", action="store_true", help="Show translucent viability box in both outputs.")
+    parser.add_argument("--out-dir", default=None, help="Optional output directory. Defaults to figures/<scenario_class>_sweep_3d.")
     return parser.parse_args()
 
 
@@ -360,52 +83,44 @@ def main() -> None:
     args = parse_args()
     scenario_class = args.scenario_class.strip().lower()
     selected_scenarios = choose_scenarios(scenario_class)
+    classifier_fn, reset_fn, state_colors = get_classifier_components(args.classifier_type)
     regimes = ["inside", "inside_near_boundary", "outside_near_boundary"]
-
-    out_dir = ROOT / "figures" / f"{scenario_class}_sweep_3d"
+    out_dir = Path(args.out_dir) if args.out_dir else ROOT / "figures" / f"{scenario_class}_sweep_3d"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     total_ensemble_runs = 0
-
     for scenario in selected_scenarios:
         for regime in regimes:
-            x0_center, noise_scale = make_regime_center(regime)
-
-            initial_conditions = sample_initial_conditions(
-                x0_center=x0_center,
-                n_traj=DEFAULT_SIM["n_traj"],
-                noise_scale=noise_scale,
-                rng_seed=DEFAULT_SIM["rng_seed"],
-            )
-
-            tag = f"{scenario['label']} | {regime}"
-            warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS, tag)
-
-            result = run_scenario(
-                scenario_cfg=scenario,
-                par=DEFAULT_PARAMS,
-                bounds=DEFAULT_BOUNDS,
-                x0_center=x0_center,
-                n_traj=DEFAULT_SIM["n_traj"],
-                t_span=tuple(DEFAULT_SIM["t_span"]),
-                n_eval=DEFAULT_SIM["n_eval"],
-                rng_seed=DEFAULT_SIM["rng_seed"],
-                noise_scale=noise_scale,
-                initial_conditions=initial_conditions,
-            )
-
-            slug = scenario["label"].lower().replace(" ", "_").replace("-", "_")
+            result = run_regime_scenario(scenario, regime, n_traj=args.n_traj)
+            slug = scenario_slug(scenario["label"])
             plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d.png"
             anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
-
-            save_taxonomy_plot(result, scenario, plot_path, show_box=True, stride=8)
-            save_eto_animation(result, anim_path, fps=10, max_frames=120, show_box=True)
-
+            save_taxonomy_plot(
+                result,
+                scenario,
+                plot_path,
+                bounds=DEFAULTBOUNDS,
+                par=DEFAULTPARAMS,
+                classifier_fn=classifier_fn,
+                color_map=state_colors,
+                stride=args.stride,
+                show_box=args.show_box,
+                reset_fn=reset_fn,
+            )
+            save_trajectory_animation(
+                result,
+                anim_path,
+                bounds=DEFAULTBOUNDS,
+                fps=args.fps,
+                max_frames=args.max_frames,
+                show_box=args.show_box,
+            )
             total_ensemble_runs += 1
             print(f"Done: {scenario['label']} | {regime}")
 
-    total_trajectories = total_ensemble_runs * DEFAULT_SIM["n_traj"]
+    total_trajectories = total_ensemble_runs * args.n_traj
     print(f"Scenario class: {scenario_class}")
+    print(f"Classifier type: {args.classifier_type}")
     print(f"Ensemble runs: {total_ensemble_runs}")
     print(f"Trajectory simulations: {total_trajectories}")
     print(f"Output files: {total_ensemble_runs * 2}")
