@@ -51,7 +51,7 @@ def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 
     x0_center[1] *= shift_T
     x0_center[2] *= shift_E
     x0_center[3] *= shift_O
-    initial_conditions = sampleinitialconditions(
+    initial_conditions = sample_initial_conditions(
         x0center=x0_center,
         ntraj=n_traj,
         noisescale=noise_scale,
@@ -65,7 +65,7 @@ def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, sh
         scenario, n_traj=n_traj, shift_T=shift_T, shift_E=shift_E, shift_O=shift_O
     )
     warn_if_any_initial_conditions_outside(initial_conditions, DEFAULTBOUNDS)
-    result = runscenario(
+    result = run_scenario(
         scenariocfg=scenario,
         par=DEFAULTPARAMS,
         bounds=DEFAULTBOUNDS,
