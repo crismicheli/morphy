@@ -42,4 +42,4 @@ The taxonomy figure is produced through `plotting.plot_helpers.save_taxonomy_plo
 
 ## Practical design rationale
 
-The workflow is now split into three reusable layers: scenario preparation in `scenario_helpers`, classifier selection in `classifier_dispatch`, and visualization in `plot_helpers`. This keeps `single_scenario_plots.py`, `animate_scenario_3d_eto_box.py`, and `plot_scenario_3d_taxonomy_3d.py` independent as runnable scripts while allowing them to share the same underlying implementation logic.
+The workflow is now split into three reusable layers: scenario preparation in `scenario_helpers`, classifier selection in `classifier_dispatch`, and visualization in `plot_helpers`. This keeps `single_scenario_3d.py`, `animate_scenario_3d.py`, and `plot_scenario_3d_taxonomy.py` independent as runnable scripts while allowing them to share the same underlying implementation logic.
