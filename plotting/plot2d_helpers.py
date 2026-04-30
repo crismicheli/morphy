@@ -9,7 +9,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 
-from viabilitykernels.phase_plane import ETfield, makegrid, plotallscenarios
+from viabilitykernels.phase_plane import ET_field, make_grid, plot_all_scenarios
 
 INSIDE_COLOR = "#2166ac"
 OUTSIDE_COLOR = "#d73027"
@@ -36,10 +36,10 @@ def segment_colors_for_solution_2d(sol, bounds: Dict[str, float]) -> list[str]:
 
 
 def add_et_background(ax, *, bounds: Dict[str, float], par: Dict, scenario_cfg: Dict, p: float, emax_axis: float = 2.0, tmax_axis: float = 1.6, show_box: bool = True, grid_points: int = 20) -> None:
-    EE, TT = makegrid((0, emax_axis), (0, tmax_axis), npoints=grid_points)
+    EE, TT = make_grid((0, emax_axis), (0, tmax_axis), npoints=grid_points)
     scenario_params = dict(par)
     scenario_params.update(scenario_cfg.get("param_overrides", {}))
-    dE, dT = ETfield(EE, TT, p, scenario_params)
+    dE, dT = ET_field(EE, TT, p, scenario_params)
     speed = np.sqrt(dE**2 + dT**2) + 1e-9
     ax.quiver(EE, TT, dE / speed, dT / speed, angles="xy", scale_units="xy", scale=12, alpha=0.25, color="grey")
     if show_box:
@@ -122,4 +122,4 @@ def save_all_scenarios_figure(results: Sequence[Dict], output_path: str | Path |
     save_path = None if output_path is None else str(output_path)
     if save_path is not None:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    return plotallscenarios(scenarioresults=list(results), par=par, bounds=bounds, suptitle=suptitle, savepath=save_path)
+    return plot_all_scenarios(scenarioresults=list(results), par=par, bounds=bounds, suptitle=suptitle, savepath=save_path)
