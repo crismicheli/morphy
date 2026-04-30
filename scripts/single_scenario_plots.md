@@ -18,28 +18,28 @@ These examples all run the same single-scenario workflow, but they swap the clas
 
 ## Main dependencies
 
-The script depends on standard Python utilities for argument parsing and path setup, NumPy for array handling, Matplotlib for static plotting, and `FuncAnimation` plus `PillowWriter` for GIF generation. It also uses `Line3DCollection` and `Poly3DCollection` from `mpl_toolkits.mplot3d.art3d` to render trajectory segments and the translucent viability box in 3D space.
+The script depends on standard Python utilities for argument parsing and path setup, along with the shared project modules `plotting.plot_helpers` and `plotting.scenario_helpers`. These two helper modules now provide the reusable plotting, animation, scenario selection, initial-condition generation, and simulation-execution logic.
 
-On the domain side, the script imports simulation configuration from `config`, scenario definitions from `SCENARIOS`, and trajectory generation functions such as `run_scenario` and `sample_initial_conditions` from the simulation package. Classifier selection is delegated to a dispatcher layer, which routes calls to the static, temporal, or state-machine classifier while preserving shared state colors and reset behavior.
+On the classification side, the script also depends on `classifiers.classifier_dispatch`, which acts as the selector layer for the available classifier backends. Instead of importing a single classifier implementation directly, the script requests the classifier function, optional reset function, and state-color mapping from the dispatcher.
 
 ## Execution flow
 
-The script begins by parsing CLI arguments such as scenario filter, classifier type, output directory, number of trajectories, axis view angles, animation settings, and point subsampling stride. It then selects a scenario by matching the user-provided filter string against scenario labels and constructs initial conditions using scenario-specific shifts and noise scales.
+The script begins by parsing CLI arguments such as scenario filter, classifier type, output directory, number of trajectories, axis view angles, animation settings, and point subsampling stride. It then uses `scenario_helpers` to select the matching scenario, construct initial conditions, check viability-box membership of the starting points, and run the scenario simulation once.
 
-After the initial conditions are sampled, the script warns if any start outside the viability box and then runs the selected scenario simulation to obtain a bundle of solution trajectories. These solutions are then passed to the two plotting scripts mentioned earlier: `plot_scenario_3d_taxonomy_3d.py` for the classifier-colored taxonomy scatter plot, and `animate_scenario_3d_eto_box.py` for the E-T-O trajectory animation.
+The resulting simulation bundle is then reused for both outputs. The script sends the simulation result to the plotting helpers and asks the classifier dispatcher for the appropriate classifier backend before building the taxonomy plot.
 
 ## Classification logic
 
-For the classifier-colored plot, the workflow computes numerical derivatives from each solution, iterates through timepoints with a configurable stride, and calls the dispatcher with `classifier_type` to obtain a label for each sampled point. The dispatcher can route to the static taxonomy classifier, the temporal wrapper, or the state-machine classifier, and it is also the right place to reset classifier memory before each solution when stateful modes are used.
+The classifier dispatcher centralizes backend selection for the static, temporal, and state-machine classifiers. It returns a common set of components: the pointwise classification function, a reset hook when the classifier maintains memory across calls, and the shared label-to-color mapping used by the taxonomy plot.
 
-This separation keeps the plotting scripts focused on visualization rather than classifier internals. It also avoids duplicating import and reset logic across multiple plotting scripts, which is especially important because the temporal and state-machine classifiers maintain internal caches across calls.
+This keeps the plotting code independent from the internals of the classifier implementations. The taxonomy plotting helper simply receives a classifier function and applies it to sampled trajectory points, while memory reset behavior remains encapsulated in the dispatcher layer.
 
 ## Plot outputs
 
-The animation is handled by `animate_scenario_3d_eto_box.py`, which uses the simulated trajectories directly rather than classifier output. For each trajectory, it builds 3D line segments in E-T-O space and colors them according to whether the trajectory is inside or outside the viability region, while a moving point marks the current position at each frame.
+The animation is produced through `plotting.plot_helpers.save_trajectory_animation`, which uses the simulated trajectories directly rather than classifier output. It constructs the 3D E-T-O line segments, colors trajectory segments according to viability-box membership, draws the moving point markers, and saves the final GIF.
 
-The classifier plot is handled by `plot_scenario_3d_taxonomy_3d.py`, which samples points from the trajectories and colors them according to the selected classifier labels. A text overlay in the animation updates the current simulation time and an aggregated value of `C` across trajectories, using a selectable statistic such as mean, median, minimum, or maximum. The animation is saved as a GIF, while the taxonomy plot is saved as a PNG in the chosen output directory.
+The taxonomy figure is produced through `plotting.plot_helpers.save_taxonomy_plot`, which samples points from the trajectories, computes local derivatives, applies the classifier returned by the dispatcher, and renders the classifier-colored 3D scatter plot. The taxonomy plot is saved as a PNG, while the animation is saved as a GIF in the selected output directory.
 
 ## Practical design rationale
 
-The workflow combines two complementary views of the same simulation output: geometric trajectory evolution in the animation, and phenotype-like state labeling in the classifier plot. Keeping simulation, classification dispatch, and plotting as separate layers makes the code easier to extend, test, and reuse when additional classifiers or plotting modes are added later.
+The workflow is now split into three reusable layers: scenario preparation in `scenario_helpers`, classifier selection in `classifier_dispatch`, and visualization in `plot_helpers`. This keeps `single_scenario_plots.py`, `animate_scenario_3d_eto_box.py`, and `plot_scenario_3d_taxonomy_3d.py` independent as runnable scripts while allowing them to share the same underlying implementation logic.
