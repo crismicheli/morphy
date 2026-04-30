@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import runscenario, sampleinitialconditions
+from viabilitykernels.simulation import run_scenario, sample_initial_conditions
 from plotting.plot_helpers import save_taxonomy_plot, save_trajectory_animation
 from plotting.scenario_helpers import scenario_slug, warn_if_any_initial_conditions_outside
 from classifiers.classifier_dispatch import get_classifier_components
