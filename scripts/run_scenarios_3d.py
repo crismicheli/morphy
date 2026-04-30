@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         default=None,
-        help="Optional output directory. Defaults to figures/<scenario_class>_sweep_3d.",
+        help="Optional output directory. Defaults to figures/_sweep_3d.",
     )
     return parser.parse_args()
 
@@ -140,8 +140,8 @@ def main() -> None:
         for regime in regimes:
             result = run_regime_scenario(scenario, regime, n_traj=args.n_traj)
             slug = scenario_slug(scenario["label"])
-            plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d.png"
-            anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
+            plot_path = out_dir / f"{slug}_{regime}_taxonomy_3d.png"
+            anim_path = out_dir / f"{slug}_{regime}_3d.gif"
 
             save_taxonomy_plot(
                 result,
