@@ -6,9 +6,9 @@ from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
-from taxonomy_classifier import classify_state as classify_static_state
-from taxonomy_classifier import STATE_COLORS
-from temporal_taxonomy_classifier import classify_state as classify_temporal_state
+from .taxonomy_classifier import classify_state as classify_static_state
+from .taxonomy_classifier import STATE_COLORS
+from .temporal_taxonomy_classifier import classify_state as classify_temporal_state
 
 
 STATE_ORDER = (
