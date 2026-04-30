@@ -7,11 +7,11 @@ This note describes the main dependencies and execution logic used to generate a
 The script is designed to accept a classifier type as a CLI argument, along with scenario selection and output settings. Typical calls would look like this:
 
 ```bash
-python single_scenario_plots.py   --filter "Intermediate porosity"   --classifier-type temporal   --show-box
+python single_scenario_3d.py   --filter "Intermediate porosity"   --classifier-type temporal   --show-box
 
-python single_scenario_plots.py   --filter "Intermediate porosity"   --classifier-type static   --n-traj 40   --stride 4   --out-dir figures/test_static
+python single_scenario_3d.py   --filter "Intermediate porosity"   --classifier-type static   --n-traj 40   --stride 4   --out-dir figures/test_static
 
-python single_scenario_plots.py   --filter "Unstable"   --classifier-type state_machine   --fps 12   --max-frames 200   --shift-T 1.2   --shift-E 1.1   --show-box
+python single_scenario_3d.py   --filter "Unstable"   --classifier-type state_machine   --fps 12   --max-frames 200   --shift-T 1.2   --shift-E 1.1   --show-box
 ```
 
 These examples all run the same single-scenario workflow, but they swap the classifier backend and optionally tune sampling density, animation settings, or the initial-condition center through the shift arguments.
