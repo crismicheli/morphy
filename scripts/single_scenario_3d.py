@@ -40,6 +40,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def confirm_overwrite(path: Path) -> bool:
+    if not path.exists():
+        return True
+    reply = input(f"File {path} already exists. Overwrite? [y/N] ").strip().lower()
+    return reply in {"y", "yes"}
+
+
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
@@ -56,8 +63,13 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     prefix = args.prefix or scenario_slug(result["label"])
-    animation_path = outdir / f"{prefix}_3d.gif"
-    taxonomy_path = outdir / f"{prefix}_taxonomy_3d.png"
+    clf_tag = f"clf-{args.classifier_type}"
+    animation_path = outdir / f"{prefix}_3d_{clf_tag}.gif"
+    taxonomy_path = outdir / f"{prefix}_taxonomy_3d_{clf_tag}.png"
+
+    if not confirm_overwrite(animation_path) or not confirm_overwrite(taxonomy_path):
+        print("Aborted: not overwriting existing files.")
+        return
 
     save_trajectory_animation(
         result,
