@@ -33,12 +33,12 @@ def viability_faces(e0: float, e1: float, t0: float, t1: float, o0: float, o1: f
 
 
 def get_axes_limits(bounds: Dict[str, float]) -> Tuple[float, float, float]:
-    return max(2.0, bounds["Emax"] * 1.08), max(1.6, bounds["Tmax"] * 1.08), 1.4
+    return max(2.0, bounds["E_max"] * 1.08), max(1.6, bounds["T_max"] * 1.08), 1.4
 
 
 def add_viability_box(ax, bounds: Dict[str, float], omax_axis: float) -> None:
     faces = viability_faces(
-        bounds["Emin"], bounds["Emax"], bounds["Tmin"], bounds["Tmax"], bounds["Omin"], omax_axis
+        bounds["E_min"], bounds["E_max"], bounds["T_min"], bounds["T_max"], bounds["O_min"], omax_axis
     )
     box = Poly3DCollection(
         faces,
@@ -51,7 +51,7 @@ def add_viability_box(ax, bounds: Dict[str, float], omax_axis: float) -> None:
 
 
 def point_inside_eto_box(E: float, T: float, O: float, bounds: Dict[str, float]) -> bool:
-    return bounds["Emin"] <= E <= bounds["Emax"] and bounds["Tmin"] <= T <= bounds["Tmax"] and O >= bounds["Omin"]
+    return bounds["E_min"] <= E <= bounds["E_max"] and bounds["T_min"] <= T <= bounds["T_max"] and O >= bounds["O_min"]
 
 
 def compute_solution_derivatives(sol) -> np.ndarray:
