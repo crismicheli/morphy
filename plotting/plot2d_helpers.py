@@ -121,4 +121,4 @@ def save_all_scenarios_figure(results: Sequence[Dict], output_path: str | Path |
     save_path = None if output_path is None else str(output_path)
     if save_path is not None:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    return plot_all_scenarios(scenarioresults=list(results), par=par, bounds=bounds, suptitle=suptitle, savepath=save_path)
+    return plot_all_scenarios(scenario_results=list(results), par=par, bounds=bounds, suptitle=suptitle, save_path=save_path)
