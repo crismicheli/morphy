@@ -19,15 +19,44 @@ from plotting.plot2d_helpers import print_summary_table, save_all_scenarios_figu
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run viability-kernel scenario simulations.")
-    parser.add_argument("--save", metavar="PATH", default=None, help="Save the figure to this path (e.g., figures/all.png).")
-    parser.add_argument("--filter", metavar="KEYWORD", default=None, help="Only run scenarios whose label contains KEYWORD (case-insensitive).")
-    parser.add_argument("--no-plot", action="store_true", help="Skip plotting; print the summary table only.")
-    parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help=f"Number of trajectories per ensemble (default: {DEFAULT_SIM['n_traj']}).")
+    parser.add_argument(
+        "--save",
+        metavar="PATH",
+        default="figures/all_scenarios_2d.png",
+        help="Save the figure to this path (relative to project root) "
+             "(default: figures/all_scenarios_2d.png).",
+    )
+    parser.add_argument(
+        "--filter",
+        metavar="KEYWORD",
+        default=None,
+        help="Only run scenarios whose label contains KEYWORD (case-insensitive).",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Skip plotting; print the summary table only.",
+    )
+    parser.add_argument(
+        "--n-traj",
+        type=int,
+        default=DEFAULT_SIM["n_traj"],
+        help=f"Number of trajectories per ensemble (default: {DEFAULT_SIM['n_traj']}).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # Resolve save path relative to project root; empty string means "show only"
+    save_path: Path | None
+    if args.save:
+        raw = Path(args.save)
+        save_path = raw if raw.is_absolute() else ROOT / raw
+    else:
+        save_path = None
+
     scenarios = SCENARIOS
     if args.filter:
         kw = args.filter.lower()
@@ -35,7 +64,9 @@ def main() -> None:
     if not scenarios:
         print(f"No scenarios match the filter '{args.filter}'. Exiting.")
         raise SystemExit(1)
+
     print(f"\nRunning {len(scenarios)} scenario(s)...\n")
+
     all_results = []
     for cfg in scenarios:
         t0 = time.perf_counter()
@@ -53,18 +84,23 @@ def main() -> None:
         elapsed = time.perf_counter() - t0
         print(f" ✓ {cfg['label']:<50} vf={result['viable_fraction']:.0%} ({elapsed:.2f}s)")
         all_results.append(result)
+
     print_summary_table(all_results)
+
     if args.no_plot:
         return
+
     fig = save_all_scenarios_figure(
         all_results,
-        args.save,
+        save_path,
         par=DEFAULT_PARAMS,
         bounds=DEFAULT_BOUNDS,
         suptitle="Viability kernel simulations — porosity and biophysical scenarios",
     )
-    if args.save:
-        print(f"Figure saved to: {args.save}")
+
+    if save_path:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Figure saved to: {save_path}")
     else:
         plt.show()
 
