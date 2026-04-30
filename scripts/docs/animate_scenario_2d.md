@@ -4,7 +4,7 @@
 
 ```bash
 python animate_scenario_2d.py --filter "Intermediate porosity"
-python animate_scenario_2d.py --filter "Intermediate porosity" --fps 12 --max-frames 200
+python animate_scenario_2d.py --filter "Intermediate porosity" --fps 12 --max-frames 120
 python animate_scenario_2d.py --filter "Unstable" --shift-T 1.2 --shift-E 1.1 --hide-box
 ```
 
