@@ -6,11 +6,10 @@ import sys
 import warnings
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-PACKAGE_PARENT = REPO_ROOT.parent
-
-for p in (str(PACKAGE_PARENT), str(REPO_ROOT)):
+SCRIPTDIR = Path(__file__).resolve().parent
+REPOROOT = SCRIPTDIR.parent
+PACKAGEPARENT = REPOROOT.parent
+for p in (str(PACKAGEPARENT), str(REPOROOT), str(SCRIPTDIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -18,11 +17,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from config import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from classifiers.taxonomy_classifier import STATE_COLORS, classify_state
+from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM, SCENARIOS
+from viability_kernels.simulation import run_scenario, sample_initial_conditions
+from classifier_dispatch import classify_state, get_state_colors, reset_classifier_memory
 
-BOX_GREEN = "#4dac26"
+BOXGREEN = "#4dac26"
+STATE_COLORS = get_state_colors()
 
 
 def compute_solution_derivatives(sol):
@@ -30,21 +30,39 @@ def compute_solution_derivatives(sol):
     return np.gradient(sol.y, dt, axis=1)
 
 
-def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride: int = 8):
+def classify_all_points(
+    sol,
+    bounds: dict,
+    par: dict,
+    scenario_cfg: dict,
+    classifier_type: str = "static",
+    stride: int = 8,
+    reset_memory_before_solution: bool = True,
+    **classifier_kwargs,
+):
+    if reset_memory_before_solution:
+        reset_classifier_memory(classifier_type)
+
     dydt = compute_solution_derivatives(sol)
     snapshots = []
-
     for i in range(0, sol.y.shape[1], stride):
         C, T, E, O = [float(v) for v in sol.y[:, i]]
         dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-
         label = classify_state(
-            C, T, E, O, dC, dT, dE, dO,
+            C,
+            T,
+            E,
+            O,
+            dC,
+            dT,
+            dE,
+            dO,
             bounds=bounds,
             par=par,
             scenario_cfg=scenario_cfg,
+            classifier_type=classifier_type,
+            **classifier_kwargs,
         )
-
         snapshots.append(
             {
                 "t": float(sol.t[i]),
@@ -56,36 +74,41 @@ def classify_all_points(sol, bounds: dict, par: dict, scenario_cfg: dict, stride
                 "color": STATE_COLORS[label],
             }
         )
-
     return snapshots
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Plot all trajectory points in 3D (E,T,O) space colored by taxonomy state, without animation."
+        description="Plot all trajectory points in 3D E,T,O space colored by classifier state."
     )
     p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
     p.add_argument(
+        "--classifier-type",
+        choices=("static", "temporal", "state_machine"),
+        default="static",
+        help="Which classifier implementation to use.",
+    )
+    p.add_argument(
         "--output",
-        default=str(REPO_ROOT / "figures" / "taxonomy_trajectory_states_3d.png"),
+        default=str(REPOROOT / "figures" / "taxonomy_trajectory_states_3d.png"),
         help="Output figure path.",
     )
-    p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
+    p.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories.")
     p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
     p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
     p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
     p.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     p.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
     p.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
-    p.add_argument("--stride", type=int, default=8, help="Subsample factor for plotted timepoints to reduce overplotting.")
+    p.add_argument("--stride", type=int, default=8, help="Subsample factor for plotted timepoints.")
     return p.parse_args()
 
 
 def choose_scenario(keyword: str) -> dict:
     matches = [s for s in SCENARIOS if keyword.lower() in s["label"].lower()]
     if not matches:
-        labels = "\n- " + "\n- ".join(s["label"] for s in SCENARIOS)
-        raise SystemExit(f"No scenario matched filter '{keyword}'. Available scenarios:{labels}")
+        labels = " - ".join(s["label"] for s in SCENARIOS)
+        raise SystemExit(f"No scenario matched filter {keyword!r}. Available scenarios: {labels}")
     return matches[0]
 
 
@@ -112,10 +135,8 @@ def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
     C, T, E, O = [float(v) for v in x0]
     return (
         C >= bounds["C_min"]
-        and T >= bounds["T_min"]
-        and T <= bounds["T_max"]
-        and E >= bounds["E_min"]
-        and E <= bounds["E_max"]
+        and bounds["T_min"] <= T <= bounds["T_max"]
+        and bounds["E_min"] <= E <= bounds["E_max"]
         and O >= bounds["O_min"]
     )
 
@@ -134,13 +155,13 @@ def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
 
-    x0_center = np.array(DEFAULT_SIM["x0_center"], dtype=float)
+    x0_center = np.array(DEFAULTSIM["x0_center"], dtype=float)
     noise_scale = (0.03, 0.03, 0.03, 0.05)
-    if scenario["expected"] == "borderline":
+    if scenario.get("expected") in {"borderline", "boundary"}:
         x0_center[1] *= 1.5
         x0_center[2] *= 1.7
         noise_scale = (0.04, 0.08, 0.08, 0.06)
-    elif scenario["expected"] == "unstable":
+    elif scenario.get("expected") == "unstable":
         x0_center[1] *= 1.7
         x0_center[2] *= 1.9
         noise_scale = (0.05, 0.10, 0.10, 0.07)
@@ -153,19 +174,19 @@ def main() -> None:
         x0_center=x0_center,
         n_traj=args.n_traj,
         noise_scale=noise_scale,
-        rng_seed=DEFAULT_SIM["rng_seed"],
+        rng_seed=DEFAULTSIM["rng_seed"],
     )
-    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
+    warn_if_any_initial_conditions_outside(initial_conditions, DEFAULTBOUNDS)
 
     result = run_scenario(
         scenario_cfg=scenario,
-        par=DEFAULT_PARAMS,
-        bounds=DEFAULT_BOUNDS,
+        par=DEFAULTPARAMS,
+        bounds=DEFAULTBOUNDS,
         x0_center=x0_center,
         n_traj=args.n_traj,
-        t_span=tuple(DEFAULT_SIM["t_span"]),
-        n_eval=DEFAULT_SIM["n_eval"],
-        rng_seed=DEFAULT_SIM["rng_seed"],
+        t_span=tuple(DEFAULTSIM["t_span"]),
+        n_eval=DEFAULTSIM["n_eval"],
+        rng_seed=DEFAULTSIM["rng_seed"],
         noise_scale=noise_scale,
         initial_conditions=initial_conditions,
     )
@@ -180,9 +201,10 @@ def main() -> None:
         all_points.extend(
             classify_all_points(
                 sol,
-                bounds=DEFAULT_BOUNDS,
-                par=DEFAULT_PARAMS,
+                bounds=DEFAULTBOUNDS,
+                par=DEFAULTPARAMS,
                 scenario_cfg=scenario,
+                classifier_type=args.classifier_type,
                 stride=args.stride,
             )
         )
@@ -190,13 +212,12 @@ def main() -> None:
     fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
 
-    E_max_axis = max(2.0, DEFAULT_BOUNDS["E_max"] * 1.08)
-    T_max_axis = max(1.6, DEFAULT_BOUNDS["T_max"] * 1.08)
-    O_max_axis = 1.4
-
-    ax.set_xlim(0, E_max_axis)
-    ax.set_ylim(0, T_max_axis)
-    ax.set_zlim(0, O_max_axis)
+    e_max_axis = max(2.0, DEFAULTBOUNDS["E_max"] * 1.08)
+    t_max_axis = max(1.6, DEFAULTBOUNDS["T_max"] * 1.08)
+    o_max_axis = 1.4
+    ax.set_xlim(0, e_max_axis)
+    ax.set_ylim(0, t_max_axis)
+    ax.set_zlim(0, o_max_axis)
     ax.set_xlabel("ECM density E")
     ax.set_ylabel("Cytoskeletal tension T")
     ax.set_zlabel("Oxygen O")
@@ -205,17 +226,14 @@ def main() -> None:
 
     if args.show_box:
         faces = viability_faces(
-            DEFAULT_BOUNDS["E_min"], DEFAULT_BOUNDS["E_max"],
-            DEFAULT_BOUNDS["T_min"], DEFAULT_BOUNDS["T_max"],
-            DEFAULT_BOUNDS["O_min"], O_max_axis,
+            DEFAULTBOUNDS["E_min"],
+            DEFAULTBOUNDS["E_max"],
+            DEFAULTBOUNDS["T_min"],
+            DEFAULTBOUNDS["T_max"],
+            DEFAULTBOUNDS["O_min"],
+            o_max_axis,
         )
-        box = Poly3DCollection(
-            faces,
-            facecolors=BOX_GREEN,
-            edgecolors=BOX_GREEN,
-            linewidths=0.8,
-            alpha=0.08,
-        )
+        box = Poly3DCollection(faces, facecolors=BOXGREEN, edgecolors=BOXGREEN, linewidths=0.8, alpha=0.08)
         ax.add_collection3d(box)
 
     for cls, color in STATE_COLORS.items():
@@ -228,18 +246,11 @@ def main() -> None:
         ax.scatter(E, T, O, s=12, alpha=0.55, color=color, label=cls)
 
     ax.set_title(
-        f"{label}\nAll trajectory points in 3D (E, T, O), colored by taxonomy state",
+        f"{label} trajectory points in 3D E, T, O, colored by {args.classifier_type} classifier state",
         fontsize=13,
         fontweight="bold",
     )
-
-    legend = ax.legend(
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        frameon=True,
-        fontsize=10,
-        title="Taxonomy state",
-    )
+    legend = ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=True, fontsize=10, title="State")
     legend.get_frame().set_facecolor("white")
     legend.get_frame().set_alpha(0.95)
     legend.get_frame().set_edgecolor("0.75")
@@ -247,6 +258,7 @@ def main() -> None:
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
     print(f"Scenario: {label}")
+    print(f"Classifier type: {args.classifier_type}")
     print(f"Saved figure: {output_path}")
 
 
