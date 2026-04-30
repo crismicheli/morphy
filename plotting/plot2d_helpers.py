@@ -17,7 +17,7 @@ BOX_GREEN = "#4dac26"
 
 
 def point_inside_et_box(E: float, T: float, bounds: Dict[str, float]) -> bool:
-    return bounds["Emin"] <= E <= bounds["Emax"] and bounds["Tmin"] <= T <= bounds["Tmax"]
+    return bounds["E_min"] <= E <= bounds["E_max"] and bounds["T_min"] <= T <= bounds["T_max"]
 
 
 def build_line_segments_2d(sol, frame: int) -> np.ndarray:
@@ -43,7 +43,7 @@ def add_et_background(ax, *, bounds: Dict[str, float], par: Dict, scenario_cfg: 
     speed = np.sqrt(dE**2 + dT**2) + 1e-9
     ax.quiver(EE, TT, dE / speed, dT / speed, angles="xy", scale_units="xy", scale=12, alpha=0.25, color="grey")
     if show_box:
-        rect = Rectangle((bounds["Emin"], bounds["Tmin"]), bounds["Emax"] - bounds["Emin"], bounds["Tmax"] - bounds["Tmin"], facecolor=BOX_GREEN, alpha=0.10, edgecolor="none")
+        rect = Rectangle((bounds["E_min"], bounds["T_min"]), bounds["E_max"] - bounds["E_min"], bounds["T_max"] - bounds["T_min"], facecolor=BOX_GREEN, alpha=0.10, edgecolor="none")
         ax.add_patch(rect)
     ax.set_xlabel("ECM density E")
     ax.set_ylabel("Cytoskeletal tension T")
@@ -72,8 +72,7 @@ def save_et_animation(result: Dict, scenario_cfg: Dict, output_path: Path, *, bo
         point = ax.plot([], [], "o", ms=4, color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR, zorder=5)[0]
         line_collections.append(lc)
         points.append(point)
-    ax.set_title(f"{label}
-Animated ensemble in the (E, T) phase plane", fontsize=12, fontweight="bold")
+    ax.set_title(f"{label}Animated ensemble in the (E, T) phase plane", fontsize=12, fontweight="bold")
     viable_count = sum(r.viable for r in reports)
     subtitle = ax.text(0.02, 0.98, f"Viable trajectories: {viable_count}/{len(reports)} | p={p:.2f}", transform=ax.transAxes, va="top", ha="left", fontsize=10, bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.9))
 
