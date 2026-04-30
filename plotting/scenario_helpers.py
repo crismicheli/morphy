@@ -52,10 +52,10 @@ def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 
     x0_center[2] *= shift_E
     x0_center[3] *= shift_O
     initial_conditions = sample_initial_conditions(
-        x0center=x0_center,
-        ntraj=n_traj,
-        noisescale=noise_scale,
-        rngseed=DEFAULT_SIM["rng_seed"],
+        x0_center=x0_center,
+        n_traj=n_traj,
+        noise_scale=noise_scale,
+        rng_seed=DEFAULT_SIM["rng_seed"],
     )
     return x0_center, noise_scale, initial_conditions
 
@@ -69,12 +69,12 @@ def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, sh
         scenariocfg=scenario,
         par=DEFAULT_PARAMS,
         bounds=DEFAULT_BOUNDS,
-        x0center=x0_center,
-        ntraj=n_traj,
+        x0_center=x0_center,
+        n_traj=n_traj,
         tspan=tuple(DEFAULT_SIM["t_span"]),
-        neval=DEFAULT_SIM["n_eval"],
-        rngseed=DEFAULT_SIM["rng_seed"],
-        noisescale=noise_scale,
-        initialconditions=initial_conditions,
+        n_eval=DEFAULT_SIM["n_eval"],
+        rng_seed=DEFAULT_SIM["rng_seed"],
+        noise_scale=noise_scale,
+        initial_conditions=initial_conditions,
     )
     return result
