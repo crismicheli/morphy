@@ -5,24 +5,36 @@ import argparse
 import sys
 from pathlib import Path
 
-SCRIPTDIR = Path(__file__).resolve().parent
-REPOROOT = SCRIPTDIR.parent
-PACKAGEPARENT = REPOROOT.parent
-for p in (str(PACKAGEPARENT), str(REPOROOT)):
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PACKAGE_PARENT = REPO_ROOT.parent
+
+for p in (str(PACKAGE_PARENT), str(REPO_ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot_helpers import save_taxonomy_plot
-from plotting.scenario_helpers import choose_scenario, run_single_scenario
+from plotting.scenario_helpers import choose_scenario, run_single_scenario, scenario_slug
 from classifiers.classifier_dispatch import get_classifier_components
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Plot all trajectory points in 3D E,T,O space colored by taxonomy state, without animation.")
+    p = argparse.ArgumentParser(
+        description="Plot all trajectory points in 3D E,T,O space colored by taxonomy state, without animation."
+    )
     p.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
-    p.add_argument("--output", default=str(REPOROOT / "figures" / "taxonomy_trajectory_states_3d.png"), help="Output figure path.")
-    p.add_argument("--classifier-type", choices=["static", "temporal", "state_machine"], default="static", help="Classifier backend.")
+    p.add_argument(
+        "--output",
+        default=None,
+        help="Output figure path. If omitted, a scenario-based name is created in root/figures.",
+    )
+    p.add_argument(
+        "--classifier-type",
+        choices=["static", "temporal", "state_machine"],
+        default="static",
+        help="Classifier backend.",
+    )
     p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
     p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
     p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
@@ -37,9 +49,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
-    result = run_single_scenario(scenario, n_traj=args.n_traj, shift_T=args.shift_T, shift_E=args.shift_E, shift_O=args.shift_O)
+    result = run_single_scenario(
+        scenario,
+        n_traj=args.n_traj,
+        shift_T=args.shift_T,
+        shift_E=args.shift_E,
+        shift_O=args.shift_O,
+    )
     classifier_fn, reset_fn, state_colors = get_classifier_components(args.classifier_type)
-    output_path = Path(args.output)
+
+    if args.output:
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = REPO_ROOT / output_path
+    else:
+        slug = scenario_slug(result["label"])
+        output_path = REPO_ROOT / "figures" / f"{slug}_taxonomy_3d.png"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     save_taxonomy_plot(
         result,
         scenario,
