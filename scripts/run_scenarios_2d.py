@@ -115,8 +115,8 @@ import matplotlib.pyplot as plt
 
 from config.default_params import DEFAULT_PARAMS, DEFAULT_BOUNDS, DEFAULT_SIM
 from config.scenarios import SCENARIOS
-from viability_kernels.simulation import run_scenario
-from viability_kernels.phase_plane import plot_all_scenarios
+from viabilitykernels.simulation import run_scenario
+from viabilitykernels.phase_plane import plot_all_scenarios
 
 
 # ---------------------------------------------------------------------------
