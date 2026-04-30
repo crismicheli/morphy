@@ -9,7 +9,7 @@ Typical calls look like this:
 ```bash
 python run_scenarios_3d.py unstable
 
-python run_scenarios_3d.py boundary   --classifier-type temporal   --show-box
+python run_scenarios_3d.py borderline   --classifier-type temporal   --show-box
 
 python run_scenarios_3d.py stable   --classifier-type state_machine   --n-traj 40   --stride 4   --fps 12   --max-frames 160
 ```
