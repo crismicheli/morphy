@@ -35,9 +35,7 @@ def main() -> None:
     if not scenarios:
         print(f"No scenarios match the filter '{args.filter}'. Exiting.")
         raise SystemExit(1)
-    print(f"
-Running {len(scenarios)} scenario(s)...
-")
+    print(f"\nRunning {len(scenarios)} scenario(s)...\n")
     all_results = []
     for cfg in scenarios:
         t0 = time.perf_counter()
