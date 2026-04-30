@@ -66,7 +66,7 @@ def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, sh
     )
     warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
     result = run_scenario(
-        scenariocfg=scenario,
+        scenario_cfg=scenario,
         par=DEFAULT_PARAMS,
         bounds=DEFAULT_BOUNDS,
         x0_center=x0_center,
