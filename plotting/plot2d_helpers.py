@@ -36,7 +36,7 @@ def segment_colors_for_solution_2d(sol, bounds: Dict[str, float]) -> list[str]:
 
 
 def add_et_background(ax, *, bounds: Dict[str, float], par: Dict, scenario_cfg: Dict, p: float, emax_axis: float = 2.0, tmax_axis: float = 1.6, show_box: bool = True, grid_points: int = 20) -> None:
-    EE, TT = make_grid((0, emax_axis), (0, tmax_axis), npoints=grid_points)
+    EE, TT = make_grid((0, emax_axis), (0, tmax_axis), n_points=grid_points)
     scenario_params = dict(par)
     scenario_params.update(scenario_cfg.get("param_overrides", {}))
     dE, dT = ET_field(EE, TT, p, scenario_params)
