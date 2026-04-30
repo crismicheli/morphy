@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import DEFAULTBOUNDS, DEFAULTPARAMS, DEFAULTSIM
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot2d_helpers import save_et_animation
 from plotting.scenario_helpers import choose_scenario, run_single_scenario
 
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=str(ROOT / "figures" / "intermediate_porosity_animation.gif"), help="Output GIF path.")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second for the GIF.")
     parser.add_argument("--max-frames", type=int, default=160, help="Maximum number of animation frames to render.")
-    parser.add_argument("--n-traj", type=int, default=DEFAULTSIM["n_traj"], help="Number of trajectories to simulate.")
+    parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories to simulate.")
     parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to the initial T center.")
     parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to the initial E center.")
     parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to the initial O center.")
@@ -37,8 +37,8 @@ def main() -> None:
         result,
         scenario,
         output_path,
-        bounds=DEFAULTBOUNDS,
-        par=DEFAULTPARAMS,
+        bounds=DEFAULT_BOUNDS,
+        par=DEFAULT_PARAMS,
         fps=args.fps,
         max_frames=args.max_frames,
         show_box=not args.hide_box,
