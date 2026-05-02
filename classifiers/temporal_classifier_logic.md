@@ -1,116 +1,84 @@
-# Temporal taxonomy classifier design rules
+# Temporal taxonomy classifier 
 
-This document defines a temporal taxonomy classifier that explicitly **inherits from** the current static classifier in `taxonomy_classifier.py` rather than replacing it.
+The temporal taxonomy classifier is best understood as the static classifier plus a small memory-and-caution layer. It does not redefine the taxonomy, introduce a new scoring system, or replace the biological meaning of the existing labels. Instead, it first asks what the static classifier thinks the current sampled point looks like, then adjusts that answer using short-term memory, viability tracking, recovery detection, and a few simple persistence rules.
 
-The temporal classifier is designed to preserve the static classifier philosophy:
+## Core idea
 
-1. **Dynamic-first instantaneous evidence remains primary**.
-2. **Static contextual parameters remain those already defined and used by the static classifier**.
-3. **Viability bounds remain separate from taxonomy semantics**.
-4. **Temporal logic is added only as a clearly delimited post-processing layer**.
+The static classifier labels what the system looks like right now from the current state, local derivatives, and a limited set of interpretable parameters. The temporal classifier keeps that exact instantaneous logic by calling the static classifier as its first step. After that, it adds a wrapper that makes the final label less jumpy and more aware of whether the system is briefly wobbling, steadily recovering, or staying in a bad regime for long enough to count as sustained collapse.
 
-## Inheritance from the static classifier
+In simple terms, the static classifier is a snapshot reader, while the temporal classifier is a snapshot reader with short-term memory and caution layers on top.
 
-The temporal classifier does **not** introduce a new instantaneous scoring system. It first calls the existing static classifier:
+## What stays the same as the static classifier
+
+The temporal classifier inherits the same label set as the static classifier: Apoptosis, Proliferation, Migration, Quiescence, Diversification, and Undetermined. It also inherits the same dynamic-first interpretation of `C`, `T`, `E`, `O` and their derivatives, the same contextual parameter subset, the same contextual gates, and the same ordered rule-based philosophy (see pseudocode later) at the instantaneous level.
+
+It first calls the existing static classifier:
 
 ```python
 classify_static_state(C, T, E, O, dC, dT, dE, dO, bounds, par=None, scenario_cfg=None)
 ```
 
-This means the temporal model inherits all of the following from the static classifier:
+This means the temporal classifier is not a new taxonomy definition. The biological meaning of the labels still comes from the static classifier.
 
-- the same dynamic-first interpretation of `C`, `T`, `E`, `O` and their derivatives,
-- the same interpretable static parameter subset,
-- the same contextual gates,
-- the same label set,
-- the same ordered first-match rule structure.
+## What the temporal layer adds
 
-Therefore, the temporal layer is not a new taxonomy definition. It is a temporal wrapper around the already defined taxonomy.
+The temporal layer adds a small set of extra features on top of the static label.
 
-## What is new in the temporal classifier
+### 1. Short memory
 
-The temporal classifier adds only a small number of explicit time-related computational elements.
+For each parameter/scenario signature, the temporal classifier stores a `TemporalMemory` object in an internal cache. That memory keeps the last temporal label, the last static base label, a dwell count, a short recent history of temporal labels, a short recent history of static labels, and counters for how many consecutive sampled steps were inside or outside viability bounds.
 
-### 1. Memory of previous assigned labels
+This memory is there to stabilize interpretation over time, not to create a hidden-state model.
 
-The classifier stores a short memory object per parameter/scenario signature. That memory includes:
+### 2. Viability tracking
 
-- the last temporal label,
-- the last base static label,
-- dwell count for the current temporal label,
-- short recent history of temporal labels,
-- short recent history of base static labels,
-- counts of consecutive samples inside and outside viability bounds.
+The temporal wrapper separately checks whether the current sampled point is inside the viability region. That check uses the bounds on `C`, `T`, `E`, and `O`, but it is intentionally kept separate from taxonomy definition.
 
-This memory is used only to stabilize label transitions over time.
+In other words, viability is not used here to say “this is Migration” or “this is Apoptosis.” It is used only to detect whether the system has been staying outside the admissible region for several steps in a row.
 
-### 2. Viability-membership tracking
+### 3. Recovery detection
 
-The temporal classifier computes whether the current point lies inside the viability bounds:
+The temporal classifier computes a recovery score that asks whether an out-of-bounds variable is moving back toward the viable region. For example, recovery increases if `C` is too low but `dC > 0`, if `T` is too high but `dT < 0`, or if `O` is too low but `dO > 0`.
 
-```python
-_inside_viability(C, T, E, O, bounds)
-```
+This score does not define labels on its own. It acts as a caution signal telling the wrapper that the current bad-looking state may actually be on the way back.
 
-This is **not** used to redefine taxonomy labels. It is used only to detect whether a point has spent several sampled steps outside the admissible region.
+### 4. Grace period for brief excursions
 
-### 3. Recovery score
+If the current point is outside viability bounds, but the static classifier does not say Apoptosis and the system has only recently moved outside while already showing recovery, the temporal wrapper temporarily changes the candidate label to `Undetermined`.
 
-The temporal wrapper computes a simple recovery score based on whether an out-of-bounds variable is moving back toward its admissible range.
+This feature stops the classifier from overreacting to short-lived excursions.
 
-Examples:
+### 5. Recovery-aware caution around apoptosis
 
-- if `C < C_min` but `dC > 0`, recovery increases,
-- if `O < O_min` but `dO > 0`, recovery increases,
-- if `T > T_max` but `dT < 0`, recovery increases.
+If the static classifier says `Apoptosis`, the temporal wrapper does not always accept that immediately. If the state is actually inside viability bounds, or if it has been outside for only a short time and recovery is already present, the wrapper changes the candidate label to `Undetermined` instead of committing straight away to apoptosis.
 
-This score is not a taxonomy rule. It is only a temporal hint used to avoid prematurely locking a state into a terminal interpretation while it is still recovering.
+This is one of the main ways the temporal version becomes more conservative than the static one during transient collapse-like episodes.
 
-### 4. Grace period for transient excursions
+### 6. Slower switching between labels
 
-When a trajectory has only recently moved outside viability bounds and is already showing recovery, the temporal wrapper may temporarily output `Undetermined` rather than immediately forcing a strong state conclusion.
+If the new candidate label differs from the previous temporal label, the wrapper does not automatically switch. It checks recent temporal history and only accepts the new label if there is enough recent support.
 
-This prevents brief excursions from being overinterpreted.
+If that support is missing, the wrapper keeps the previous non-Undetermined temporal label, or falls back to the candidate if there was no meaningful previous label. This is the main anti-flicker mechanism.
 
-### 5. Persistence requirement for state switching
+### 7. Sticky sustained apoptosis
 
-A new candidate label is not always accepted immediately. If the candidate differs from the current temporal label, the wrapper requires short recent support before switching.
+Once the temporal label is already `Apoptosis`, the wrapper makes that state harder to leave than an ordinary label. If the system is still outside viability bounds or recovery is still weak, the final label remains `Apoptosis`.
 
-This is a temporal smoothing rule, not a taxonomy-definition rule.
+Only when the point is back inside viability and recovery is strong enough does the wrapper release that sticky terminal state, and even then it releases it to `Undetermined`, not directly to a positive label. This reflects the idea that sustained collapse should be harder to reverse at the label level than ordinary mode switching.
 
-### 6. Sticky handling of sustained apoptosis
 
-Once sustained apoptosis has been established, the temporal wrapper keeps the label unless the trajectory shows sufficiently strong recovery and re-entry toward viable behavior.
+## Decision workflow
 
-This reflects the idea that terminal collapse should be harder to reverse at the label level than ordinary mode switching.
+The temporal classifier follows a simple sequence.
 
-## Explicit separation of taxonomy and viability
-
-A central design requirement is that taxonomy and viability remain separate.
-
-- **Taxonomy** answers: what biological mode does the current state most resemble?
-- **Viability** answers: is the current state inside the admissible bounds?
-
-The temporal classifier preserves that separation by using the static taxonomy classifier as the source of biological labels and using viability membership only as a temporal-stability signal.
-
-Viability does **not** directly assign Apoptosis, Migration, Proliferation, Quiescence, or Diversification. It only helps the temporal wrapper decide whether a label should be stabilized, delayed, or temporarily replaced by `Undetermined` during transient excursions.
-
-## Temporal decision workflow
-
-The temporal classifier follows this sequence.
-
-1. Compute the base instantaneous taxonomy label using the static classifier.
-2. Compute whether the state is inside viability bounds.
+1. Compute the base label using the static classifier.
+2. Check whether the current point is inside viability bounds.
 3. Compute the recovery score.
-4. Apply explicit temporal wrapper rules:
-   - grace outside bounds,
-   - recovery-aware suppression of premature apoptosis,
-   - persistence requirement for label switching,
-   - sticky sustained apoptosis.
+4. Adjust the candidate label using temporal rules: grace period, recovery-aware caution, slower switching, and sticky apoptosis.
 5. Update temporal memory.
 6. Return the final temporal label.
 
-## Temporal pseudocode
+A compact pseudocode view is:
 
 ```python
 base_label = classify_static_state(...)
@@ -119,64 +87,50 @@ recovery = recovery_score(...)
 
 candidate = base_label
 
-if transiently_outside_bounds and recovering and base_label != "Apoptosis":
+if outside_briefly and recovering and base_label != "Apoptosis":
     candidate = "Undetermined"
 
-if base_label == "Apoptosis":
-    if inside_bounds:
-        candidate = "Undetermined"
-    elif outside_duration_is_short and recovering:
-        candidate = "Undetermined"
+if base_label == "Apoptosis" and (inside or recovering_too_early):
+    candidate = "Undetermined"
 
-if last_temporal_label == "Apoptosis":
-    if still_outside_bounds or weak_recovery:
-        final = "Apoptosis"
-    else:
-        final = "Undetermined"
+if last_label == "Apoptosis":
+    final = keep_or_release_apoptosis_based_on_inside_and_recovery(...)
 else:
-    if candidate_is_supported_by_recent_history:
-        final = candidate
-    else:
-        final = previous_label_or_candidate
+    final = switch_only_if_recent_history_supports_candidate(...)
 
 update_memory()
 return final
 ```
 
-This pseudocode should be read as a wrapper around the static classifier, not as a replacement classifier.
+This pseudocode is only a simplification, but it matches the structure of the actual implementation.
 
-## Relationship to the previous temporal implementation
+## Solution-level classification
 
-This rewritten temporal classifier intentionally avoids the problems of the earlier temporal implementation.
+The temporal classifier also provides helpers for full trajectories. As in the static implementation, it computes derivatives from the solution, samples evenly spaced points, classifies them one by one, and returns a majority label for the trajectory.
 
-It does **not**:
+The important difference is that the sampled points are processed sequentially through the temporal wrapper, so later sampled points can be influenced by the short-term memory built from earlier sampled points. By default, memory is reset before each new run.
 
-- construct a new per-label score system,
-- redefine label semantics through generic parameter multipliers,
-- mix taxonomy definition and viability scoring into a single opaque decision layer,
-- replace the explicit rule structure of the static classifier.
+## Relationship to viability
 
-Instead, it inherits the already clarified static taxonomy and adds only explicit temporal consistency rules.
+Taxonomy and viability are still separate concepts in the temporal implementation. Taxonomy answers what biological mode the system most resembles, while viability answers whether the state is inside the allowed region defined by the bounds.
 
-## Solution-level use
+The temporal classifier preserves that separation. Viability is used only as a timing and confidence signal for smoothing transitions, delaying premature conclusions, and deciding whether sustained apoptosis should remain sticky.
 
-The temporal classifier also provides a `classify_solution(...)` helper.
+## Important implementation details
 
-That function:
+A few details are worth stating explicitly because they matter for a precise reading of the code.
 
-1. computes derivatives from the full trajectory,
-2. samples evenly spaced trajectory points,
-3. applies the temporal point classifier in sequence,
-4. returns the majority temporal label.
+- Memory is cached per inferred signature, built from scenario `p`, scenario `label`, and the contents of `par`, rather than from every possible scenario field.
+- Switching support is implemented through recent-label counting in temporal history, not through a separate probabilistic confidence model.
+- Leaving sticky apoptosis requires being back inside viability and having sufficiently strong recovery.
+- Majority voting for whole solutions uses a fixed state order to break ties.
 
-This preserves the same sampling-based trajectory summary style already used in the static classifier ecosystem, while making the temporal additions explicit and limited.
+These details are compatible with the simple framing above, but they are useful when documenting the implementation faithfully.
 
 ## Recommended interpretation
 
-The correct interpretation of this temporal classifier is:
+The best short description is:
 
-- the **static classifier** defines what each biological label means,
-- the **temporal wrapper** decides how quickly those labels are allowed to change across sampled trajectory points,
-- the **viability checks** contribute only to temporal caution and recovery handling, not to taxonomy semantics themselves.
+> The temporal taxonomy classifier is the static classifier plus a small memory-and-caution layer.
 
-That separation keeps the code readable, auditable, and faithful to the current static classifier philosophy.
+The static classifier decides what the current point looks like biologically. The temporal layer then decides whether that label should be trusted immediately, softened to `Undetermined`, held for a bit longer, or made harder to reverse because the recent trajectory suggests a transient wobble, an ongoing recovery, or sustained collapse.
