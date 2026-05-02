@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from dataclasses import dataclass, field
-from typing import Deque, Dict, Optional, Tuple
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from .taxonomy_classifier import STATE_COLORS
 from .taxonomy_classifier import classify_state as classify_static_state
@@ -20,178 +20,98 @@ STATE_ORDER = (
 
 @dataclass
 class StateMachineMemory:
+    """Minimal memory for enforcing allowed transitions only.
+
+    This layer keeps track of the last emitted state-machine label so that
+    it can apply an explicit transition graph on top of the temporal label.
+
+    It does not add extra stickiness beyond that graph and does not
+    re-implement temporal smoothing.
+    """
+
     last_state_machine_label: str = "Undetermined"
-    last_temporal_label: str = "Undetermined"
-    last_static_label: str = "Undetermined"
-    dwell_count: int = 0
-    history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
-    temporal_history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
-    static_history: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
-    outside_viability_count: int = 0
-    inside_viability_count: int = 0
-    recovery_streak: int = 0
-    stress_streak: int = 0
-    ambiguity_streak: int = 0
 
 
 _STATE_MACHINE_CACHE: Dict[Tuple[int, int], StateMachineMemory] = defaultdict(StateMachineMemory)
 
 
 def reset_classifier_memory() -> None:
+    """Clear cached state-machine memory.
+
+    This should be called when starting a new trajectory classification
+    so that the allowed-transition logic does not leak across scenarios.
+    """
     _STATE_MACHINE_CACHE.clear()
 
 
 def _infer_signature(par: Optional[dict], scenario_cfg: Optional[dict]) -> Tuple[int, int]:
+    """Infer a hashable signature for caching per parameter/scenario pair."""
     p_val = 0.0 if scenario_cfg is None else float(scenario_cfg.get("p", 0.0))
     s_label = "" if scenario_cfg is None else str(scenario_cfg.get("label", ""))
     par_items = tuple(sorted((par or {}).items()))
     return hash((round(p_val, 6), s_label)), hash(par_items)
 
 
-def _inside_viability(C: float, T: float, E: float, O: float, bounds: dict) -> bool:
-    return (
-        C >= float(bounds["C_min"])
-        and float(bounds["T_min"]) <= T <= float(bounds["T_max"])
-        and float(bounds["E_min"]) <= E <= float(bounds["E_max"])
-        and O >= float(bounds["O_min"])
-    )
-
-
-def _recovery_score(
-    C: float,
-    T: float,
-    E: float,
-    O: float,
-    dC: float,
-    dT: float,
-    dE: float,
-    dO: float,
-    bounds: dict,
-) -> float:
-    score = 0.0
-    if C < bounds["C_min"] and dC > 0:
-        score += 1.0
-    if T < bounds["T_min"] and dT > 0:
-        score += 1.0
-    if T > bounds["T_max"] and dT < 0:
-        score += 1.0
-    if E < bounds["E_min"] and dE > 0:
-        score += 1.0
-    if E > bounds["E_max"] and dE < 0:
-        score += 1.0
-    if O < bounds["O_min"] and dO > 0:
-        score += 1.0
-    return score
-
-
 def _allowed_transitions() -> Dict[str, set]:
+    """Explicit transition graph between coarse biological regimes.
+
+    The graph is intentionally sparse: it encodes which mode changes are
+    considered biologically plausible in one step, while leaving the
+    temporal classifier in charge of local smoothing.
+    """
     return {
+        # From an unresolved state, any label is allowed.
         "Undetermined": set(STATE_ORDER),
-        "Quiescence": {"Quiescence", "Migration", "Proliferation", "Diversification", "Undetermined", "Apoptosis"},
-        "Migration": {"Migration", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
-        "Proliferation": {"Proliferation", "Diversification", "Quiescence", "Undetermined", "Apoptosis"},
-        "Diversification": {"Diversification", "Migration", "Proliferation", "Quiescence", "Undetermined", "Apoptosis"},
+        # Quiet regimes can move into activity or collapse.
+        "Quiescence": {
+            "Quiescence",
+            "Migration",
+            "Proliferation",
+            "Diversification",
+            "Undetermined",
+            "Apoptosis",
+        },
+        # Migration and proliferation can interconvert, rest, diversify, or collapse.
+        "Migration": {
+            "Migration",
+            "Diversification",
+            "Quiescence",
+            "Proliferation",
+            "Undetermined",
+            "Apoptosis",
+        },
+        "Proliferation": {
+            "Proliferation",
+            "Diversification",
+            "Quiescence",
+            "Migration",
+            "Undetermined",
+            "Apoptosis",
+        },
+        # Diversification can move back to active/quiet modes or collapse.
+        "Diversification": {
+            "Diversification",
+            "Migration",
+            "Proliferation",
+            "Quiescence",
+            "Undetermined",
+            "Apoptosis",
+        },
+        # Once in apoptosis, only staying apoptotic or becoming unresolved is allowed.
         "Apoptosis": {"Apoptosis", "Undetermined"},
     }
 
 
-def _update_streaks(
-    mem: StateMachineMemory,
-    static_label: str,
-    temporal_label: str,
-    inside: bool,
-    recovery: float,
-) -> None:
-    if inside:
-        mem.inside_viability_count += 1
-        mem.outside_viability_count = 0
-    else:
-        mem.outside_viability_count += 1
-        mem.inside_viability_count = 0
+def _apply_allowed_transition(candidate: str, previous: str) -> str:
+    """Project a candidate label onto the allowed transition graph.
 
-    if inside and recovery >= 2.0:
-        mem.recovery_streak += 1
-    else:
-        mem.recovery_streak = 0
-
-    if (not inside) and recovery == 0.0:
-        mem.stress_streak += 1
-    else:
-        mem.stress_streak = 0
-
-    if temporal_label == "Undetermined" and static_label == "Undetermined":
-        mem.ambiguity_streak += 1
-    else:
-        mem.ambiguity_streak = 0
-
-
-def _ambiguity_persistence_rule(candidate: str, mem: StateMachineMemory, ambiguity_window: int) -> str:
-    if mem.ambiguity_streak >= ambiguity_window:
-        return "Undetermined"
-    return candidate
-
-
-def _stress_lock_rule(
-    candidate: str,
-    temporal_label: str,
-    inside: bool,
-    mem: StateMachineMemory,
-    stress_lock_steps: int,
-) -> str:
-    if mem.stress_streak >= stress_lock_steps and not inside:
-        if temporal_label in {"Apoptosis", "Undetermined"}:
-            return "Apoptosis"
-    return candidate
-
-
-def _recovery_unlock_rule(
-    candidate: str,
-    temporal_label: str,
-    mem: StateMachineMemory,
-    recovery_lock_steps: int,
-) -> str:
-    if mem.recovery_streak >= recovery_lock_steps:
-        if candidate == "Apoptosis":
-            return "Undetermined"
-        if candidate == "Undetermined" and temporal_label in {"Quiescence", "Proliferation"}:
-            return temporal_label
-    return candidate
-
-
-def _allowed_transition_rule(candidate: str, previous: str) -> str:
+    If the candidate transition is not allowed from the previous label,
+    the previous label is retained. This adds a lightweight regime graph
+    on top of the temporal classifier without additional stickiness.
+    """
     allowed = _allowed_transitions()
     if candidate not in allowed.get(previous, set(STATE_ORDER)):
         return previous
-    return candidate
-
-
-def _switch_persistence_rule(
-    candidate: str,
-    previous: str,
-    mem: StateMachineMemory,
-    switch_persistence_steps: int,
-) -> str:
-    if candidate == previous:
-        return candidate
-    recent_match = sum(1 for x in mem.history if x == candidate)
-    if recent_match >= switch_persistence_steps - 1:
-        return candidate
-    return previous if previous != "Undetermined" else candidate
-
-
-def _sustained_apoptosis_retention_rule(
-    candidate: str,
-    previous: str,
-    inside: bool,
-    recovery: float,
-    mem: StateMachineMemory,
-    recovery_lock_steps: int,
-) -> str:
-    if previous == "Apoptosis":
-        if not inside or recovery < 2.0:
-            return "Apoptosis"
-        if mem.recovery_streak >= recovery_lock_steps:
-            return "Undetermined"
     return candidate
 
 
@@ -211,24 +131,48 @@ def classify_state(
     temporal_grace_outside_steps: int = 2,
     temporal_apoptosis_persistence_steps: int = 3,
     temporal_switch_persistence_steps: int = 2,
-    state_switch_persistence_steps: int = 2,
-    state_ambiguity_window: int = 2,
-    state_recovery_lock_steps: int = 2,
-    state_stress_lock_steps: int = 2,
 ) -> str:
-    """Three-layer state machine classifier with explicit transition rules."""
+    """State-machine wrapper with only an explicit transition graph.
+
+    Layer 1 (static): `taxonomy_classifier.classify_state` defines
+    instantaneous label semantics.
+
+    Layer 2 (temporal): `temporal_taxonomy_classifier.classify_state`
+    adds local sequential smoothing, viability-aware grace periods,
+    and recovery-sensitive handling of apoptosis.
+
+    Layer 3 (this module): applies a simple allowed-transition graph on
+    top of the temporal label, using only the last emitted state-machine
+    label as context. No extra stickiness, streaks, or scores are added
+    beyond what the temporal classifier already implements.
+    """
     key = _infer_signature(par, scenario_cfg)
     mem = _STATE_MACHINE_CACHE[key]
 
+    # Compute the static and temporal labels but do not alter their logic.
     static_label = classify_static_state(
-        C, T, E, O, dC, dT, dE, dO,
+        C,
+        T,
+        E,
+        O,
+        dC,
+        dT,
+        dE,
+        dO,
         bounds=bounds,
         par=par,
         scenario_cfg=scenario_cfg,
     )
 
     temporal_label = classify_temporal_state(
-        C, T, E, O, dC, dT, dE, dO,
+        C,
+        T,
+        E,
+        O,
+        dC,
+        dT,
+        dE,
+        dO,
         bounds=bounds,
         par=par,
         scenario_cfg=scenario_cfg,
@@ -237,36 +181,11 @@ def classify_state(
         switch_persistence_steps=temporal_switch_persistence_steps,
     )
 
-    inside = _inside_viability(C, T, E, O, bounds)
-    recovery = _recovery_score(C, T, E, O, dC, dT, dE, dO, bounds)
+    # Apply only the explicit transition graph.
+    previous = mem.last_state_machine_label
+    final = _apply_allowed_transition(temporal_label, previous)
 
-    _update_streaks(mem, static_label, temporal_label, inside, recovery)
-
-    candidate = temporal_label
-    candidate = _ambiguity_persistence_rule(candidate, mem, state_ambiguity_window)
-    candidate = _stress_lock_rule(candidate, temporal_label, inside, mem, state_stress_lock_steps)
-    candidate = _recovery_unlock_rule(candidate, temporal_label, mem, state_recovery_lock_steps)
-    candidate = _allowed_transition_rule(candidate, mem.last_state_machine_label)
-    candidate = _switch_persistence_rule(candidate, mem.last_state_machine_label, mem, state_switch_persistence_steps)
-    final = _sustained_apoptosis_retention_rule(
-        candidate,
-        mem.last_state_machine_label,
-        inside,
-        recovery,
-        mem,
-        state_recovery_lock_steps,
-    )
-
-    if final == mem.last_state_machine_label:
-        mem.dwell_count += 1
-    else:
-        mem.dwell_count = 1
-
+    # Update memory with the new label.
     mem.last_state_machine_label = final
-    mem.last_temporal_label = temporal_label
-    mem.last_static_label = static_label
-    mem.history.append(final)
-    mem.temporal_history.append(temporal_label)
-    mem.static_history.append(static_label)
 
     return final
