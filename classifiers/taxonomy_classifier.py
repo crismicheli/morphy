@@ -1,33 +1,29 @@
 from __future__ import annotations
 
-from collections import Counter
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 
 STATE_COLORS = {
-    "Apoptosis": "#111111",      # near-black
-    "Migration": "#00B7FF",      # vivid cyan
-    "Proliferation": "#FF7A00",  # vivid orange
-    "Quiescence": "#2ECC40",     # bright green
-    "Diversification": "#8E44AD",# strong purple
-    "Undetermined": "#FFD400",   # saturated yellow
+    "Apoptosis": "#111111",
+    "Migration": "#00B7FF",
+    "Proliferation": "#FF7A00",
+    "Quiescence": "#2ECC40",
+    "Diversification": "#8E44AD",
+    "Undetermined": "#FFD400",
 }
 
-# Biologically interpretable static parameters intentionally used by the classifier.
-# We do NOT use the full parameter vector; we only keep the subset that maps cleanly
-# to phenotype-like labels.
 INTERPRETABLE_STATIC_PARAMS = (
-    "p",        # scaffold porosity / structural context
-    "beta",     # curvature-to-tension coupling
-    "eta",      # ECM-mediated tension damping
-    "kappa",    # ECM deposition rate
-    "mu",       # ECM-mediated oxygen consumption
-    "delta_T",  # intrinsic tension decay
-    "delta_E",  # ECM remodelling / degradation
-    "delta_O",  # baseline oxygen loss
-    "rho",      # porosity-to-oxygen scaling
-    "s",        # oxygen-supply scaling with porosity
+    "p",
+    "beta",
+    "eta",
+    "kappa",
+    "mu",
+    "delta_T",
+    "delta_E",
+    "delta_O",
+    "rho",
+    "s",
 )
 
 
@@ -95,14 +91,7 @@ def classify_state(
     par: Optional[dict] = None,
     scenario_cfg: Optional[dict] = None,
 ) -> str:
-    """Classify one instantaneous state into a coarse biological taxonomy.
-
-    Implementation philosophy:
-    - dynamic-first: state variables and local derivatives provide the main evidence,
-    - context-aware: a small interpretable subset of static parameters contributes
-      directly through explicit contextual gates,
-    - ordered: labels are evaluated by first-match precedence rather than scoring.
-    """
+    """Classify one instantaneous state into a coarse biological taxonomy."""
     ctx = _extract_parameter_context(par=par, scenario_cfg=scenario_cfg)
 
     C_min = float(bounds["C_min"])
@@ -127,8 +116,6 @@ def classify_state(
     strong_matrix_drive = ctx["matrix_drive"] > 1.35
     high_decay_burden = ctx["decay_burden"] > 2.35
 
-    # 1) APOPTOSIS
-    # Terminal or collapse-like states are evaluated first.
     if (O < O_min or C < C_min) and (
         dO < 0 or dC < 0 or high_oxygen_burden or low_oxygen_supply or high_decay_burden
     ):
@@ -138,24 +125,18 @@ def classify_state(
     if near_C_low and dC < -0.02 and (dE <= 0 or dT <= 0):
         return "Apoptosis"
 
-    # 2) PROLIFERATION
-    # Viable oxygen plus constructive ECM growth, optionally reinforced by context.
     if O > max(0.35, O_min + 0.10) and dE > 0.03:
         if strong_matrix_drive or (T > max(0.30, T_min + 0.10) and dT >= -0.02):
             return "Proliferation"
     if near_E_high and O > O_min and dE >= 0:
         return "Proliferation"
 
-    # 3) MIGRATION
-    # Viable remodelling / ECM loss under non-terminal tension and oxygen.
     if O > O_min and T >= T_min and dE < -0.02:
         if abs(dT) < 0.05 or (strong_tension_damping and not strong_tension_drive):
             return "Migration"
     if E > E_min and dE < 0 and dT <= 0.03 and dO >= -0.02 and not near_O_low:
         return "Migration"
 
-    # 4) QUIESCENCE
-    # Viable, low-activity states with small local flow and low mechanical drive.
     if (
         T_min <= T <= 0.75 * T_max
         and E_min <= E <= 0.70 * E_max
@@ -168,8 +149,6 @@ def classify_state(
     if near_T_low and weak_tension_drive and dT <= 0 and dE <= 0.02 and O > O_min:
         return "Quiescence"
 
-    # 5) DIVERSIFICATION
-    # Active, non-terminal, non-quiescent commitment-like states.
     if O > O_min and C > C_min:
         if (dT > 0.04 and dE > 0) or (near_T_high and dE >= 0) or (dC > 0.02 and dE > 0):
             return "Diversification"
@@ -177,53 +156,6 @@ def classify_state(
         if dT >= 0 and dE >= -0.01:
             return "Diversification"
 
-    # 6) UNDETERMINED
-    # Explicit boundary-aware ambiguity label plus global fallback.
     if near_T_high or near_E_high or near_O_low or near_E_low or near_C_low:
         return "Undetermined"
     return "Undetermined"
-
-
-def classify_solution(
-    sol,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-) -> str:
-    t = sol.t
-    y = sol.y
-    dt = max(1e-12, float(np.mean(np.diff(t))))
-    dydt = np.gradient(y, dt, axis=1)
-
-    idx = np.linspace(0, y.shape[1] - 1, num=min(n_samples, y.shape[1]), dtype=int)
-    labels: List[str] = []
-    for i in idx:
-        C, T, E, O = [float(v) for v in y[:, i]]
-        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        labels.append(
-            classify_state(
-                C, T, E, O, dC, dT, dE, dO,
-                bounds=bounds,
-                par=par,
-                scenario_cfg=scenario_cfg,
-            )
-        )
-
-    if not labels:
-        return "Undetermined"
-
-    return Counter(labels).most_common(1)[0][0]
-
-
-def classify_solutions(
-    solutions: Iterable,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-) -> List[str]:
-    return [
-        classify_solution(sol, bounds=bounds, par=par, scenario_cfg=scenario_cfg, n_samples=n_samples)
-        for sol in solutions
-    ]
