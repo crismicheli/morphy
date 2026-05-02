@@ -1,23 +1,11 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
-import numpy as np
-
-from .taxonomy_classifier import classify_state as classify_static_state
 from .taxonomy_classifier import STATE_COLORS
-
-
-STATE_ORDER = (
-    "Apoptosis",
-    "Proliferation",
-    "Migration",
-    "Quiescence",
-    "Diversification",
-    "Undetermined",
-)
+from .taxonomy_classifier import classify_state as classify_static_state
 
 
 @dataclass
@@ -47,12 +35,6 @@ def _infer_signature(par: Optional[dict], scenario_cfg: Optional[dict]) -> Tuple
 
 
 def _inside_viability(C: float, T: float, E: float, O: float, bounds: dict) -> bool:
-    """Evaluate viability-bounds membership.
-
-    This function is intentionally separate from taxonomy logic.
-    It is used only by the temporal wrapper to detect persistence outside bounds,
-    never to redefine the underlying static taxonomy rules.
-    """
     return (
         C >= float(bounds["C_min"])
         and float(bounds["T_min"]) <= T <= float(bounds["T_max"])
@@ -72,10 +54,6 @@ def _recovery_score(
     dO: float,
     bounds: dict,
 ) -> float:
-    """Measure whether an out-of-bounds state is moving back toward viability.
-
-    This score is a temporal helper only. It does not define taxonomy labels.
-    """
     score = 0.0
     if C < bounds["C_min"] and dC > 0:
         score += 1.0
@@ -90,18 +68,6 @@ def _recovery_score(
     if O < bounds["O_min"] and dO > 0:
         score += 1.0
     return score
-
-
-def _majority_label(labels: List[str]) -> str:
-    if not labels:
-        return "Undetermined"
-    counts = Counter(labels)
-    best_n = max(counts.values())
-    tied = {label for label, n in counts.items() if n == best_n}
-    for label in STATE_ORDER:
-        if label in tied:
-            return label
-    return "Undetermined"
 
 
 def classify_state(
@@ -121,20 +87,7 @@ def classify_state(
     apoptosis_persistence_steps: int = 3,
     switch_persistence_steps: int = 2,
 ) -> str:
-    """Temporal wrapper around the static taxonomy classifier.
-
-    Design philosophy:
-    1. Inherit instantaneous taxonomy from taxonomy_classifier.classify_state.
-    2. Keep viability-bounds checks separate from taxonomy rules.
-    3. Add only explicit temporal post-processing:
-       - short grace period for transient excursions,
-       - recovery-aware suppression of premature terminal labels,
-       - persistence requirement for rapid state switching,
-       - sticky terminal behavior for sustained apoptosis.
-
-    The temporal layer does NOT re-score labels from scratch and does NOT replace
-    the static classifier's explicit dynamic-first rule structure.
-    """
+    """Temporal wrapper around the static taxonomy classifier."""
     key = _infer_signature(par, scenario_cfg)
     mem = _TEMPORAL_CACHE[key]
 
@@ -193,81 +146,3 @@ def classify_state(
     mem.base_history.append(base_label)
 
     return final
-
-
-def classify_solution(
-    sol,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-    *,
-    grace_outside_steps: int = 2,
-    apoptosis_persistence_steps: int = 3,
-    switch_persistence_steps: int = 2,
-    reset_memory_before_run: bool = True,
-) -> str:
-    """Classify a full solution using the temporal wrapper over sampled points.
-
-    The workflow is:
-    1. compute local derivatives from the trajectory,
-    2. sample evenly spaced points,
-    3. classify each point with the temporal wrapper,
-    4. return the majority temporal label.
-
-    This preserves inheritance from the static classifier while adding explicit,
-    limited temporal consistency rules.
-    """
-    if reset_memory_before_run:
-        reset_classifier_memory()
-
-    t = sol.t
-    y = sol.y
-    dt = max(1e-12, float(np.mean(np.diff(t))))
-    dydt = np.gradient(y, dt, axis=1)
-
-    idx = np.linspace(0, y.shape[1] - 1, num=min(n_samples, y.shape[1]), dtype=int)
-    labels: List[str] = []
-    for i in idx:
-        C, T, E, O = [float(v) for v in y[:, i]]
-        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        labels.append(
-            classify_state(
-                C, T, E, O, dC, dT, dE, dO,
-                bounds=bounds,
-                par=par,
-                scenario_cfg=scenario_cfg,
-                grace_outside_steps=grace_outside_steps,
-                apoptosis_persistence_steps=apoptosis_persistence_steps,
-                switch_persistence_steps=switch_persistence_steps,
-            )
-        )
-
-    return _majority_label(labels)
-
-
-def classify_solutions(
-    solutions: Iterable,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-    *,
-    grace_outside_steps: int = 2,
-    apoptosis_persistence_steps: int = 3,
-    switch_persistence_steps: int = 2,
-) -> List[str]:
-    return [
-        classify_solution(
-            sol,
-            bounds=bounds,
-            par=par,
-            scenario_cfg=scenario_cfg,
-            n_samples=n_samples,
-            grace_outside_steps=grace_outside_steps,
-            apoptosis_persistence_steps=apoptosis_persistence_steps,
-            switch_persistence_steps=switch_persistence_steps,
-            reset_memory_before_run=True,
-        )
-        for sol in solutions
-    ]
