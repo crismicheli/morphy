@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
-import numpy as np
-
-from .taxonomy_classifier import classify_state as classify_static_state
 from .taxonomy_classifier import STATE_COLORS
+from .taxonomy_classifier import classify_state as classify_static_state
 from .temporal_taxonomy_classifier import classify_state as classify_temporal_state
-
 
 STATE_ORDER = (
     "Apoptosis",
@@ -87,18 +84,6 @@ def _recovery_score(
     return score
 
 
-def _majority_label(labels: List[str]) -> str:
-    if not labels:
-        return "Undetermined"
-    counts = Counter(labels)
-    best_n = max(counts.values())
-    tied = {label for label, n in counts.items() if n == best_n}
-    for label in STATE_ORDER:
-        if label in tied:
-            return label
-    return "Undetermined"
-
-
 def _allowed_transitions() -> Dict[str, set]:
     return {
         "Undetermined": set(STATE_ORDER),
@@ -140,11 +125,7 @@ def _update_streaks(
         mem.ambiguity_streak = 0
 
 
-def _ambiguity_persistence_rule(
-    candidate: str,
-    mem: StateMachineMemory,
-    ambiguity_window: int,
-) -> str:
+def _ambiguity_persistence_rule(candidate: str, mem: StateMachineMemory, ambiguity_window: int) -> str:
     if mem.ambiguity_streak >= ambiguity_window:
         return "Undetermined"
     return candidate
@@ -177,10 +158,7 @@ def _recovery_unlock_rule(
     return candidate
 
 
-def _allowed_transition_rule(
-    candidate: str,
-    previous: str,
-) -> str:
+def _allowed_transition_rule(candidate: str, previous: str) -> str:
     allowed = _allowed_transitions()
     if candidate not in allowed.get(previous, set(STATE_ORDER)):
         return previous
@@ -238,15 +216,7 @@ def classify_state(
     state_recovery_lock_steps: int = 2,
     state_stress_lock_steps: int = 2,
 ) -> str:
-    """Three-layer state machine classifier with explicit transition rules.
-
-    Layer 1: static classifier defines instantaneous label semantics.
-    Layer 2: temporal classifier stabilizes short-term transitions.
-    Layer 3: this state machine applies explicit regime-level transition rules.
-
-    This layer does not use score biases. It operates on inherited labels and
-    clearly named transition rules only.
-    """
+    """Three-layer state machine classifier with explicit transition rules."""
     key = _infer_signature(par, scenario_cfg)
     mem = _STATE_MACHINE_CACHE[key]
 
@@ -300,86 +270,3 @@ def classify_state(
     mem.static_history.append(static_label)
 
     return final
-
-
-def classify_solution(
-    sol,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-    *,
-    temporal_grace_outside_steps: int = 2,
-    temporal_apoptosis_persistence_steps: int = 3,
-    temporal_switch_persistence_steps: int = 2,
-    state_switch_persistence_steps: int = 2,
-    state_ambiguity_window: int = 2,
-    state_recovery_lock_steps: int = 2,
-    state_stress_lock_steps: int = 2,
-    reset_memory_before_run: bool = True,
-) -> str:
-    if reset_memory_before_run:
-        reset_classifier_memory()
-
-    t = sol.t
-    y = sol.y
-    dt = max(1e-12, float(np.mean(np.diff(t))))
-    dydt = np.gradient(y, dt, axis=1)
-
-    idx = np.linspace(0, y.shape[1] - 1, num=min(n_samples, y.shape[1]), dtype=int)
-    labels: List[str] = []
-    for i in idx:
-        C, T, E, O = [float(v) for v in y[:, i]]
-        dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
-        labels.append(
-            classify_state(
-                C, T, E, O, dC, dT, dE, dO,
-                bounds=bounds,
-                par=par,
-                scenario_cfg=scenario_cfg,
-                temporal_grace_outside_steps=temporal_grace_outside_steps,
-                temporal_apoptosis_persistence_steps=temporal_apoptosis_persistence_steps,
-                temporal_switch_persistence_steps=temporal_switch_persistence_steps,
-                state_switch_persistence_steps=state_switch_persistence_steps,
-                state_ambiguity_window=state_ambiguity_window,
-                state_recovery_lock_steps=state_recovery_lock_steps,
-                state_stress_lock_steps=state_stress_lock_steps,
-            )
-        )
-
-    return _majority_label(labels)
-
-
-def classify_solutions(
-    solutions: Iterable,
-    bounds: dict,
-    par: Optional[dict] = None,
-    scenario_cfg: Optional[dict] = None,
-    n_samples: int = 7,
-    *,
-    temporal_grace_outside_steps: int = 2,
-    temporal_apoptosis_persistence_steps: int = 3,
-    temporal_switch_persistence_steps: int = 2,
-    state_switch_persistence_steps: int = 2,
-    state_ambiguity_window: int = 2,
-    state_recovery_lock_steps: int = 2,
-    state_stress_lock_steps: int = 2,
-) -> List[str]:
-    return [
-        classify_solution(
-            sol,
-            bounds=bounds,
-            par=par,
-            scenario_cfg=scenario_cfg,
-            n_samples=n_samples,
-            temporal_grace_outside_steps=temporal_grace_outside_steps,
-            temporal_apoptosis_persistence_steps=temporal_apoptosis_persistence_steps,
-            temporal_switch_persistence_steps=temporal_switch_persistence_steps,
-            state_switch_persistence_steps=state_switch_persistence_steps,
-            state_ambiguity_window=state_ambiguity_window,
-            state_recovery_lock_steps=state_recovery_lock_steps,
-            state_stress_lock_steps=state_stress_lock_steps,
-            reset_memory_before_run=True,
-        )
-        for sol in solutions
-    ]
