@@ -1,4 +1,4 @@
-# Taxonomy classifier design rules
+# Static taxonomy classifier
 
 This document describes the current biological taxonomy classifier used to annotate scaffold-cell-matrix simulations. The classifier assigns one of six labels — Apoptosis, Migration, Proliferation, Quiescence, Diversification, or Undetermined — from the instantaneous system state, its local derivatives, and a deliberately limited subset of interpretable static parameters.
 
@@ -186,28 +186,15 @@ Undetermined is the ambiguity label and the global fallback. It is used when the
 
 Taxonomy and viability are related but not identical.
 
-Viability asks whether a point or a trajectory stays inside a predefined admissible region defined by thresholds such as `C_min`, `T_min`, `T_max`, `E_min`, `E_max`, and `O_min`. Taxonomy asks what kind of biological mode the system appears to be expressing.
+Viability asks whether a point stays inside a predefined admissible region defined by thresholds such as `C_min`, `T_min`, `T_max`, `E_min`, `E_max`, and `O_min`. Taxonomy asks what kind of biological mode the system appears to be expressing.
 
 The taxonomy classifier does use these thresholds and their near-boundary neighborhoods as biological reference values. However, it does not produce viability reports and should not be interpreted as a direct viability classifier. The same reference bounds help anchor both systems, but the outputs answer different questions.
 
-## Instantaneous and trajectory-level use
+## Instantaneous use
 
-The central classifier is instantaneous. It takes one sampled point and returns one label. It has no built-in memory of previous states.
+The classifier is instantaneous. It takes one sampled point and returns one label. It has no built-in memory of previous states and it does not aggregate information across multiple points.
 
-Trajectory-level labeling is handled separately by:
-
-```python
-classify_solution(sol, bounds, par=None, scenario_cfg=None, n_samples=7)
-```
-
-This helper:
-
-1. Computes local derivatives from the trajectory.
-2. Selects a fixed number of evenly spaced sample indices.
-3. Classifies each sampled point independently with `classify_state`.
-4. Returns the majority label across those sampled points.
-
-This is a sampling-and-voting strategy, not temporal smoothing and not a hidden-state model.
+Any downstream analysis that examines trajectories, endpoints, or temporal persistence should be treated as a separate layer built on top of `classify_state(...)`, not as part of the static taxonomy definition itself.
 
 ## Practical coding guidance
 
@@ -220,6 +207,7 @@ The implementation should continue to follow these constraints:
 - Document helper thresholds and contextual gates in the code and in the accompanying design document.
 - Preserve the ordered first-match rule structure so rule precedence stays auditable.
 - Keep taxonomy labels separate from viability reports.
+- Do not reintroduce trajectory-level aggregation logic into the static classifier module.
 
 ## Recommended interpretation
 
