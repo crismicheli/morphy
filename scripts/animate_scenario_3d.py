@@ -25,9 +25,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=10, help="Frames per second.")
     parser.add_argument("--max-frames", type=int, default=160, help="Maximum number of frames.")
     parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
-    parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
-    parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
-    parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
+    parser.add_argument("--shift-T", type=float, default=0.0, help="Additive offset applied to initial T center.")
+    parser.add_argument("--shift-E", type=float, default=0.0, help="Additive offset applied to initial E center.")
+    parser.add_argument("--shift-O", type=float, default=0.0, help="Additive offset applied to initial O center.")
     parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
     parser.add_argument("--show-box", action="store_true", help="Show translucent viability box.")
@@ -38,6 +38,16 @@ def parse_args() -> argparse.Namespace:
         help="How to aggregate C across trajectories for the numeric readout.",
     )
     return parser.parse_args()
+
+
+def resolve_output_path(result_label: str, output_arg: str | None) -> Path:
+    if output_arg:
+        output_path = Path(output_arg)
+        if not output_path.is_absolute():
+            output_path = ROOT / output_path
+        return output_path
+    slug = scenario_slug(result_label)
+    return ROOT / "figures" / f"{slug}_3d.gif"
 
 
 def main() -> None:
@@ -51,14 +61,7 @@ def main() -> None:
         shift_O=args.shift_O,
     )
 
-    if args.output:
-        output_path = Path(args.output)
-        if not output_path.is_absolute():
-            output_path = ROOT / output_path
-    else:
-        slug = scenario_slug(result["label"])
-        output_path = ROOT / "figures" / f"{slug}_3d.gif"
-
+    output_path = resolve_output_path(result["label"], args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     save_trajectory_animation(
