@@ -2,220 +2,115 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
-import warnings
 from pathlib import Path
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM, SCENARIOS
-from viabilitykernels.simulation import run_scenario, sample_initial_conditions
-from plotting.plot_helpers import save_taxonomy_plot, save_trajectory_animation
-from plotting.scenario_helpers import scenario_slug
-from classifiers.classifier_dispatch import get_classifier_components
+SCRIPTS_DIR = ROOT / "scripts"
+SINGLE_SCRIPT = SCRIPTS_DIR / "single_scenario_3d_3classifiers.py"
+DEFAULT_OUTDIR = ROOT / "figures" / "all_9_scenarios_3classifiers"
 
 TARGET_SCENARIOS = [
-    "Low porosity",
-    "Intermediate porosity",
-    "High porosity",
-    "Stiff scaffold",
-    "Hypoxic environment",
-    "Over-tensioned",
-    "Fast ECM remodelling",
-    "Enhanced guidance",
-    "Near-critical asymmetric regime",
+    ("Low porosity", "low_porosity_p015"),
+    ("Intermediate porosity", "intermediate_porosity_p040"),
+    ("High porosity", "high_porosity_p075"),
+    ("Stiff scaffold", "stiff_scaffold_eta18"),
+    ("Hypoxic environment", "hypoxic_environment"),
+    ("Over-tensioned", "over_tensioned_beta35"),
+    ("Fast ECM remodelling", "fast_ecm_remodelling_deltae12"),
+    ("Enhanced guidance", "enhanced_guidance_a60"),
+    ("Near-critical asymmetric regime", "near_critical_asymmetric"),
 ]
 
-REGIME_ORDER = [
-    "outside",
-    "inside",
-    "near",
+REGIMES = [
+    ("outside", {"shift_T": 1.56 / 1.40, "shift_E": 1.86 / 1.65, "shift_O": 0.18 / 0.24}),
+    ("inside", {"shift_T": 0.45 / 1.40, "shift_E": 0.35 / 1.65, "shift_O": 0.65 / 0.24}),
+    ("near", {"shift_T": 1.0, "shift_E": 1.0, "shift_O": 1.0}),
 ]
-
-
-def choose_target_scenarios() -> list[dict]:
-    selected = []
-    missing = []
-    for needle in TARGET_SCENARIOS:
-        matches = [s for s in SCENARIOS if needle.lower() in str(s.get("label", "")).lower()]
-        if not matches:
-            missing.append(needle)
-            continue
-        selected.append(matches[0])
-    if missing:
-        available = ", ".join(str(s.get("label", "<unnamed>")) for s in SCENARIOS)
-        raise ValueError(
-            "Could not find scenario labels for: "
-            + ", ".join(missing)
-            + f". Available scenarios: {available}"
-        )
-    return selected
-
-
-def make_regime_center(regime: str) -> tuple[np.ndarray, tuple[float, float, float, float]]:
-    if regime == "inside":
-        center = np.array([0.22, 0.45, 0.35, 0.65], dtype=float)
-        noise = (0.02, 0.03, 0.03, 0.03)
-    elif regime == "near":
-        center = np.array([0.16, 1.40, 1.65, 0.24], dtype=float)
-        noise = (0.01, 0.04, 0.05, 0.02)
-    elif regime == "outside":
-        center = np.array([0.14, 1.56, 1.86, 0.18], dtype=float)
-        noise = (0.01, 0.04, 0.05, 0.02)
-    else:
-        raise ValueError(f"Unknown regime: {regime}")
-    return center, noise
-
-
-def is_inside_viability_box(x0: np.ndarray, bounds: dict) -> bool:
-    C, T, E, O = [float(v) for v in x0]
-    return (
-        C >= bounds["C_min"]
-        and bounds["T_min"] <= T <= bounds["T_max"]
-        and bounds["E_min"] <= E <= bounds["E_max"]
-        and O >= bounds["O_min"]
-    )
-
-
-def warn_initial_conditions(initial_conditions: list[np.ndarray], bounds: dict, tag: str, regime: str) -> None:
-    outside_count = sum(0 if is_inside_viability_box(x0, bounds) else 1 for x0 in initial_conditions)
-    if regime == "outside" and outside_count == 0:
-        warnings.warn(f"{tag}: expected outside starts, but all sampled initial conditions are inside the viability box.")
-    if regime == "inside" and outside_count > 0:
-        warnings.warn(f"{tag}: expected inside starts, but {outside_count}/{len(initial_conditions)} initial conditions are outside the viability box.")
-    if regime == "near":
-        warnings.warn(
-            f"{tag}: near-boundary regime produced {outside_count}/{len(initial_conditions)} initial conditions outside the viability box; mixed starts are acceptable."
-        )
-
-
-def run_regime_scenario(scenario: dict, regime: str, *, n_traj: int, rng_seed: int):
-    x0_center, noise_scale = make_regime_center(regime)
-    initial_conditions = sample_initial_conditions(
-        x0_center=x0_center,
-        n_traj=n_traj,
-        noise_scale=noise_scale,
-        rng_seed=rng_seed,
-    )
-    warn_initial_conditions(initial_conditions, DEFAULT_BOUNDS, f"{scenario['label']} | {regime}", regime)
-    result = run_scenario(
-        scenario_cfg=scenario,
-        par=DEFAULT_PARAMS,
-        bounds=DEFAULT_BOUNDS,
-        x0_center=x0_center,
-        n_traj=n_traj,
-        t_span=tuple(DEFAULT_SIM["t_span"]),
-        n_eval=DEFAULT_SIM["n_eval"],
-        rng_seed=rng_seed,
-        noise_scale=noise_scale,
-        initial_conditions=initial_conditions,
-    )
-    result["regime"] = regime
-    return result
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep all 9 named scenarios across outside, inside, and near-boundary initial-condition regimes."
+        description="Wrapper over single_scenario_3d_3classifiers.py to sweep 9 scenarios across outside/inside/near starts and save 27 taxonomy figures."
     )
-    parser.add_argument(
-        "--classifier-type",
-        choices=["static", "temporal", "state_machine"],
-        default="state_machine",
-        help="Classifier backend for taxonomy plots.",
-    )
-    parser.add_argument(
-        "--n-traj",
-        type=int,
-        default=DEFAULT_SIM["n_traj"],
-        help="Number of trajectories per run.",
-    )
-    parser.add_argument(
-        "--stride",
-        type=int,
-        default=8,
-        help="Subsample factor for taxonomy plot timepoints.",
-    )
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=10,
-        help="Frames per second for animations.",
-    )
-    parser.add_argument(
-        "--max-frames",
-        type=int,
-        default=120,
-        help="Maximum animation frames.",
-    )
-    parser.add_argument(
-        "--show-box",
-        action="store_true",
-        help="Show translucent viability box in outputs.",
-    )
-    parser.add_argument(
-        "--out-dir",
-        default=None,
-        help="Optional output directory. Defaults to figures/all_9_scenarios_sweep_3d.",
-    )
-    parser.add_argument(
-        "--rng-seed",
-        type=int,
-        default=DEFAULT_SIM["rng_seed"],
-        help="Base random seed for initial-condition sampling.",
-    )
+    parser.add_argument("--out-dir", default=str(DEFAULT_OUTDIR), help="Directory for saved figures.")
+    parser.add_argument("--n-traj", type=int, default=40, help="Number of trajectories per run.")
+    parser.add_argument("--stride", type=int, default=8, help="Subsample factor for taxonomy plots.")
+    parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
+    parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
+    parser.add_argument("--show-box", action="store_true", help="Show translucent viability box.")
+    parser.add_argument("--python", default=sys.executable, help="Python executable to use.")
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without executing them.")
     return parser.parse_args()
+
+
+def expected_output(prefix: str, out_dir: Path) -> Path:
+    return out_dir / f"{prefix}_taxonomy_3d_3classifiers.png"
+
+
+def build_command(args: argparse.Namespace, scenario_filter: str, prefix: str, shifts: dict[str, float]) -> list[str]:
+    cmd = [
+        args.python,
+        str(SINGLE_SCRIPT),
+        "--filter",
+        scenario_filter,
+        "--prefix",
+        prefix,
+        "--out-dir",
+        str(args.out_dir),
+        "--n-traj",
+        str(args.n_traj),
+        "--shift-T",
+        str(shifts["shift_T"]),
+        "--shift-E",
+        str(shifts["shift_E"]),
+        "--shift-O",
+        str(shifts["shift_O"]),
+        "--stride",
+        str(args.stride),
+        "--elev",
+        str(args.elev),
+        "--azim",
+        str(args.azim),
+    ]
+    if args.show_box:
+        cmd.append("--show-box")
+    return cmd
 
 
 def main() -> None:
     args = parse_args()
-    scenarios = choose_target_scenarios()
-    classifier_fn, reset_fn, state_colors = get_classifier_components(args.classifier_type)
+    args.out_dir = Path(args.out_dir)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_dir = Path(args.out_dir) if args.out_dir else ROOT / "figures" / "all_9_scenarios_sweep_3d"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not SINGLE_SCRIPT.exists():
+        raise FileNotFoundError(f"Could not find wrapper target script: {SINGLE_SCRIPT}")
 
-    total_runs = 0
-    for scenario_idx, scenario in enumerate(scenarios):
-        slug = scenario_slug(scenario["label"])
-        for regime_idx, regime in enumerate(REGIME_ORDER):
-            rng_seed = args.rng_seed + 100 * scenario_idx + regime_idx
-            result = run_regime_scenario(scenario, regime, n_traj=args.n_traj, rng_seed=rng_seed)
-            plot_path = out_dir / f"{slug}__{regime}__taxonomy_3d__clf-{args.classifier_type}.png"
-            anim_path = out_dir / f"{slug}__{regime}__eto_3d.gif"
+    total = 0
+    for scenario_filter, slug in TARGET_SCENARIOS:
+        for regime_name, shifts in REGIMES:
+            prefix = f"{slug}__{regime_name}"
+            cmd = build_command(args, scenario_filter, prefix, shifts)
+            out_png = expected_output(prefix, args.out_dir)
+            total += 1
 
-            save_taxonomy_plot(
-                result,
-                scenario,
-                plot_path,
-                bounds=DEFAULT_BOUNDS,
-                par=DEFAULT_PARAMS,
-                classifier_fn=classifier_fn,
-                color_map=state_colors,
-                stride=args.stride,
-                show_box=args.show_box,
-                reset_fn=reset_fn,
-            )
-            save_trajectory_animation(
-                result,
-                anim_path,
-                bounds=DEFAULT_BOUNDS,
-                fps=args.fps,
-                max_frames=args.max_frames,
-                show_box=args.show_box,
-            )
+            print(f"[{total:02d}/27] {scenario_filter} | {regime_name}")
+            print(" ".join(cmd))
 
-            total_runs += 1
-            print(f"Done: {scenario['label']} | {regime}")
+            if args.dry_run:
+                continue
 
-    print(f"Scenarios: {len(scenarios)}")
-    print(f"Regimes per scenario: {len(REGIME_ORDER)}")
-    print(f"Total ensemble runs: {total_runs}")
-    print(f"Total output files: {2 * total_runs}")
+            completed = subprocess.run(cmd, check=False)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"Command failed for scenario={scenario_filter!r}, regime={regime_name!r} with exit code {completed.returncode}"
+                )
+            print(f"Saved: {out_png}")
+
+    print(f"Completed {total} runs.")
+    print(f"Expected taxonomy figures: {total}")
+    print(f"Output directory: {args.out_dir}")
 
 
 if __name__ == "__main__":
