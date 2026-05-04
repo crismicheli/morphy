@@ -17,13 +17,14 @@ DEFAULT_LOG = "animation_calls_log.txt"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Parse sweep_summary_calls.txt and run the matching 3D animation sweep with max_frames capped at 100."
+        description="Parse sweep_summary_calls.txt and run the matching 3D animation sweep with corrected naming and max_frames capped at 100."
     )
     parser.add_argument("--summary", default=str(DEFAULT_SUMMARY), help="Path to sweep_summary_calls.txt.")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUTDIR), help="Directory for generated GIFs and call log.")
     parser.add_argument("--python", default=sys.executable, help="Python executable to use.")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second for animations.")
-    parser.add_argument("--max-frames", type=int, default=100, help="Maximum frames per animation; should not exceed 100.")
+    parser.add_argument("--max-frames", type=int, default=100, help="Maximum frames per animation; capped at 100.")
+    parser.add_argument("--c-stat", choices=["mean", "median", "min", "max"], default="mean", help="C aggregation method passed to animate_scenario_3d.py.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing them.")
     return parser.parse_args()
 
@@ -93,6 +94,8 @@ def build_animation_command(args: argparse.Namespace, entry: dict[str, str]) -> 
         entry["elev"],
         "--azim",
         entry["azim"],
+        "--c-stat",
+        args.c_stat,
     ]
     if entry["show_box"] == "1":
         cmd.append("--show-box")
@@ -103,9 +106,6 @@ def main() -> None:
     args = parse_args()
     args.out_dir = Path(args.out_dir)
     args.out_dir.mkdir(parents=True, exist_ok=True)
-
-    if not ANIMATE_SCRIPT.exists():
-        raise FileNotFoundError(f"Could not find animation script: {ANIMATE_SCRIPT}")
 
     summary_path = Path(args.summary)
     if not summary_path.exists():
