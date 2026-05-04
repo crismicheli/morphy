@@ -35,6 +35,8 @@ The FSM uses the same label set as the static and temporal classifiers:
 - `Diversification`
 - `Undetermined`
 
+![image](state_machine_v3.png "FSM")
+
 These are not new states invented by the state machine. They are the same taxonomy labels, now interpreted as explicit FSM states.
 
 ## Inputs to the state machine
