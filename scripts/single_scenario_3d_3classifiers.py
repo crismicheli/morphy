@@ -7,6 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 
 SCRIPTDIR = Path(__file__).resolve().parent
@@ -18,7 +19,6 @@ for p in (str(PACKAGEPARENT), str(REPOROOT)):
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.scenario_helpers import choose_scenario, run_single_scenario, scenario_slug
-from plotting.plot_helpers import draw_eto_box
 from classifiers import taxonomy_classifier, temporal_taxonomy_classifier, state_machine_classifier
 
 
@@ -100,6 +100,44 @@ def collect_points(result: dict, stride: int):
     return all_points
 
 
+
+
+BOX_GREEN = "#4dac26"
+
+
+def viability_faces(T0: float, T1: float, E0: float, E1: float, O0: float, O1: float):
+    v000 = [T0, E0, O0]
+    v100 = [T1, E0, O0]
+    v110 = [T1, E1, O0]
+    v010 = [T0, E1, O0]
+    v001 = [T0, E0, O1]
+    v101 = [T1, E0, O1]
+    v111 = [T1, E1, O1]
+    v011 = [T0, E1, O1]
+    return [
+        [v000, v100, v110, v010],
+        [v001, v101, v111, v011],
+        [v000, v100, v101, v001],
+        [v010, v110, v111, v011],
+        [v000, v010, v011, v001],
+        [v100, v110, v111, v101],
+    ]
+
+
+def draw_viability_box(ax, bounds: dict):
+    T0, T1 = float(bounds["T_min"]), float(bounds["T_max"])
+    E0, E1 = float(bounds["E_min"]), float(bounds["E_max"])
+    O0, O1 = float(bounds["O_min"]), 1.0
+    faces = viability_faces(T0, T1, E0, E1, O0, O1)
+    box = Poly3DCollection(
+        faces,
+        facecolors=BOX_GREEN,
+        edgecolors=BOX_GREEN,
+        linewidths=0.8,
+        alpha=0.08,
+    )
+    ax.add_collection3d(box)
+
 def classify_points(points, classifier_fn, reset_fn, scenario_cfg):
     reset_fn()
     labels = []
@@ -133,7 +171,7 @@ def style_axis(ax, elev: float, azim: float, show_box: bool):
     ax.view_init(elev=elev, azim=azim)
     ax.grid(True, alpha=0.25)
     if show_box:
-        draw_eto_box(ax, DEFAULT_BOUNDS)
+        draw_viability_box(ax, DEFAULT_BOUNDS)
 
 
 def main() -> None:
