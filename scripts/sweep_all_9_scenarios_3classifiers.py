@@ -35,8 +35,6 @@ STRICT_TARGETS = {
     "near": {"T": 1.40, "E": 1.65, "O": 0.24},
 }
 
-
-# Viability bounds used for regime assignment in ETO space.
 BOUNDS = {
     "T_min": 0.2,
     "T_max": 1.5,
@@ -48,7 +46,7 @@ BOUNDS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep 9 scenarios across strict outside/inside/near starts using single_scenario_3d_3classifiers.py and save a summary text file."
+        description="Sweep 9 scenarios across strict outside/inside/near start-point regimes using single_scenario_3d_3classifiers.py and save a summary text file."
     )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUTDIR), help="Directory for saved figures and summary file.")
     parser.add_argument("--n-traj", type=int, default=40, help="Number of trajectories per run.")
@@ -62,25 +60,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def classify_regime(T: float, E: float, O: float) -> str:
+def classify_start_regime(T: float, E: float, O: float) -> str:
     inside = (
         BOUNDS["T_min"] <= T <= BOUNDS["T_max"]
         and BOUNDS["E_min"] <= E <= BOUNDS["E_max"]
         and O >= BOUNDS["O_min"]
     )
-    if inside:
-        near_boundary = (
-            abs(T - BOUNDS["T_min"]) <= 0.12
-            or abs(T - BOUNDS["T_max"]) <= 0.12
-            or abs(E - BOUNDS["E_min"]) <= 0.12
-            or abs(E - BOUNDS["E_max"]) <= 0.12
-            or abs(O - BOUNDS["O_min"]) <= 0.08
-        )
-        return "near" if near_boundary else "inside"
-    return "outside"
+    if not inside:
+        return "outside"
+
+    near_boundary = (
+        abs(T - BOUNDS["T_min"]) <= 0.12
+        or abs(T - BOUNDS["T_max"]) <= 0.12
+        or abs(E - BOUNDS["E_min"]) <= 0.12
+        or abs(E - BOUNDS["E_max"]) <= 0.12
+        or abs(O - BOUNDS["O_min"]) <= 0.08
+    )
+    return "near" if near_boundary else "inside"
 
 
-def sample_target_point(regime: str, rng: np.random.Generator) -> dict[str, float]:
+def sample_start_point(regime: str, rng: np.random.Generator) -> dict[str, float]:
     target = STRICT_TARGETS[regime]
     scales = {
         "outside": np.array([0.03, 0.04, 0.025]),
@@ -91,10 +90,9 @@ def sample_target_point(regime: str, rng: np.random.Generator) -> dict[str, floa
     for _ in range(2000):
         candidate = np.array([target["T"], target["E"], target["O"]], dtype=float) + rng.normal(0.0, scales)
         T, E, O = map(float, candidate)
-        found = classify_regime(T, E, O)
-        if found == regime:
+        if classify_start_regime(T, E, O) == regime:
             return {"T": T, "E": E, "O": O}
-    raise RuntimeError(f"Failed to sample a point for regime={regime}")
+    raise RuntimeError(f"Failed to sample a valid start point for regime={regime}")
 
 
 def point_to_shifts(point: dict[str, float]) -> dict[str, float]:
@@ -148,22 +146,23 @@ def main() -> None:
         raise FileNotFoundError(f"Could not find target script: {SINGLE_SCRIPT}")
 
     rng = np.random.default_rng(args.random_seed)
+    summary_path = args.out_dir / SUMMARY_NAME
     summary_lines: list[str] = []
     total = 0
 
     for scenario_filter, slug in TARGET_SCENARIOS:
         for regime in REGIME_ORDER:
-            point = sample_target_point(regime, rng)
-            shifts = point_to_shifts(point)
+            start_point = sample_start_point(regime, rng)
+            shifts = point_to_shifts(start_point)
             prefix = f"{slug}__{regime}"
             cmd = build_command(args, scenario_filter, prefix, shifts)
             out_png = expected_output(prefix, args.out_dir)
             total += 1
 
             header = (
-                f"[{total:02d}/27] {scenario_filter} | requested={regime} | "
-                f"selected_point=(T={point['T']:.4f}, E={point['E']:.4f}, O={point['O']:.4f}) | "
-                f"classified_as={classify_regime(point['T'], point['E'], point['O'])}"
+                f"[{total:02d}/27] {scenario_filter} | requested_start_regime={regime} | "
+                f"start_point=(T={start_point['T']:.4f}, E={start_point['E']:.4f}, O={start_point['O']:.4f}) | "
+                f"classified_start={classify_start_regime(start_point['T'], start_point['E'], start_point['O'])}"
             )
             cmd_str = " ".join(cmd)
             saved_line = f"Expected output: {out_png}"
@@ -174,21 +173,34 @@ def main() -> None:
 
             summary_lines.extend([header, cmd_str, saved_line, ""])
 
-            if args.dry_run:
-                continue
+    summary_lines.append(f"Completed planned runs: {total}")
+    summary_lines.append(f"Summary file: {summary_path}")
+    summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
 
+    if args.dry_run:
+        print(f"Dry run complete. Summary written to: {summary_path}")
+        return
+
+    for line in summary_lines:
+        if not line.startswith("["):
+            continue
+        pass
+
+    run_index = 0
+    for scenario_filter, slug in TARGET_SCENARIOS:
+        for regime in REGIME_ORDER:
+            start_point = sample_start_point(regime, rng)
+            shifts = point_to_shifts(start_point)
+            prefix = f"{slug}__{regime}"
+            cmd = build_command(args, scenario_filter, prefix, shifts)
+            run_index += 1
             completed = subprocess.run(cmd, check=False)
             if completed.returncode != 0:
                 raise RuntimeError(
                     f"Command failed for scenario={scenario_filter!r}, regime={regime!r} with exit code {completed.returncode}"
                 )
 
-    summary_lines.append(f"Completed runs: {total}")
-    summary_lines.append(f"Summary file: {args.out_dir / SUMMARY_NAME}")
-    summary_path = args.out_dir / SUMMARY_NAME
-    summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
-
-    print(f"Completed {total} runs.")
+    print(f"Completed {run_index} runs.")
     print(f"Summary written to: {summary_path}")
 
 
