@@ -90,19 +90,19 @@ def _coerce_state(label: str) -> FSMState:
 def _transition_from_non_apoptosis(
     candidate: str,
     current_state: FSMState,
-    history: Deque[str],
+    base_history: Deque[str],
     switch_persistence_steps: int,
 ) -> FSMState:
     if candidate == current_state.value:
         return current_state
 
-    recent_match = sum(1 for x in history if x == candidate)
-    if recent_match >= switch_persistence_steps - 1:
+    recent_match = sum(1 for x in base_history if x == candidate)
+    if candidate != "Undetermined" and recent_match >= switch_persistence_steps - 1:
         return _coerce_state(candidate)
 
-    if current_state != FSMState.UNDETERMINED:
-        return current_state
-    return _coerce_state(candidate)
+    if current_state == FSMState.UNDETERMINED:
+        return _coerce_state(candidate)
+    return FSMState.UNDETERMINED
 
 
 def _transition_from_apoptosis(
@@ -133,12 +133,14 @@ def classify_state(
 ) -> str:
     """FSM formulation of the temporal classifier.
 
-    This classifier is written as an explicit finite-state machine but preserves
-    the same output behavior as the current temporal classifier:
-    - static classifier defines the instantaneous base label,
-    - viability/recovery define guarded transitions,
-    - switching persistence uses recent label support,
-    - apoptosis is treated as a sticky state with guarded release.
+    This classifier is written as an explicit finite-state machine with the
+    same intended label set as the temporal classifier, but with lighter
+    smoothing:
+    - instantaneous support comes from the static classifier,
+    - switch support is evaluated from recent base labels,
+    - unsupported switches relax to Undetermined instead of clinging to the
+      previous non-apoptotic state,
+    - apoptosis remains sticky and requires guarded release.
     """
     key = _infer_signature(par, scenario_cfg)
     mem = _FSM_CACHE[key]
@@ -169,10 +171,6 @@ def classify_state(
 
     candidate = base_label
 
-    if not inside and base_label != "Apoptosis":
-        if mem.outside_viability_count <= grace_outside_steps and recovery > 0.0:
-            candidate = "Undetermined"
-
     if base_label == "Apoptosis":
         if inside:
             candidate = "Undetermined"
@@ -185,7 +183,7 @@ def classify_state(
         final_state = _transition_from_non_apoptosis(
             candidate=candidate,
             current_state=mem.current_state,
-            history=mem.history,
+            base_history=mem.base_history,
             switch_persistence_steps=switch_persistence_steps,
         )
 
