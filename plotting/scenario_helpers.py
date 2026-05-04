@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
@@ -24,7 +23,12 @@ def scenario_slug(label: str) -> str:
 
 def is_inside_viability_box(x0: np.ndarray, bounds: Dict) -> bool:
     C, T, E, O = (float(v) for v in x0)
-    return bounds["C_min"] <= C and bounds["T_min"] <= T <= bounds["T_max"] and bounds["E_min"] <= E <= bounds["E_max"] and O >= bounds["O_min"]
+    return (
+        bounds["C_min"] <= C
+        and bounds["T_min"] <= T <= bounds["T_max"]
+        and bounds["E_min"] <= E <= bounds["E_max"]
+        and O >= bounds["O_min"]
+    )
 
 
 def warn_if_any_initial_conditions_outside(initial_conditions, bounds: Dict) -> None:
@@ -36,10 +40,10 @@ def warn_if_any_initial_conditions_outside(initial_conditions, bounds: Dict) -> 
         )
 
 
-def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, shift_E: float = 1.0, shift_O: float = 1.0) -> Tuple[np.ndarray, Tuple[float, float, float, float], list]:
+def get_base_x0_center(scenario: Dict) -> tuple[np.ndarray, tuple[float, float, float, float]]:
     x0_center = np.array(DEFAULT_SIM["x0_center"], dtype=float)
     noise_scale = (0.03, 0.03, 0.03, 0.05)
-    expected = scenario.get("expected", "")
+    expected = str(scenario.get("expected", "")).lower()
     if expected in {"borderline", "boundary"}:
         x0_center[1] = 1.5
         x0_center[2] = 1.7
@@ -48,21 +52,61 @@ def compute_initial_conditions(scenario: Dict, *, n_traj: int, shift_T: float = 
         x0_center[1] = 1.7
         x0_center[2] = 1.9
         noise_scale = (0.05, 0.10, 0.10, 0.07)
-    x0_center[1] *= shift_T
-    x0_center[2] *= shift_E
-    x0_center[3] *= shift_O
+    return x0_center, noise_scale
+
+
+def apply_eto_shifts(
+    x0_center: np.ndarray,
+    *,
+    shift_T: float = 0.0,
+    shift_E: float = 0.0,
+    shift_O: float = 0.0,
+) -> np.ndarray:
+    shifted = np.array(x0_center, dtype=float, copy=True)
+    shifted[1] += shift_T
+    shifted[2] += shift_E
+    shifted[3] += shift_O
+    return shifted
+
+
+def compute_initial_conditions(
+    scenario: Dict,
+    *,
+    n_traj: int,
+    shift_T: float = 0.0,
+    shift_E: float = 0.0,
+    shift_O: float = 0.0,
+):
+    base_x0_center, noise_scale = get_base_x0_center(scenario)
+    x0_center = apply_eto_shifts(
+        base_x0_center,
+        shift_T=shift_T,
+        shift_E=shift_E,
+        shift_O=shift_O,
+    )
     initial_conditions = sample_initial_conditions(
         x0_center=x0_center,
         n_traj=n_traj,
         noise_scale=noise_scale,
         rng_seed=DEFAULT_SIM["rng_seed"],
     )
-    return x0_center, noise_scale, initial_conditions
+    return base_x0_center, x0_center, noise_scale, initial_conditions
 
 
-def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, shift_E: float = 1.0, shift_O: float = 1.0):
-    x0_center, noise_scale, initial_conditions = compute_initial_conditions(
-        scenario, n_traj=n_traj, shift_T=shift_T, shift_E=shift_E, shift_O=shift_O
+def run_single_scenario(
+    scenario: Dict,
+    *,
+    n_traj: int,
+    shift_T: float = 0.0,
+    shift_E: float = 0.0,
+    shift_O: float = 0.0,
+):
+    base_x0_center, x0_center, noise_scale, initial_conditions = compute_initial_conditions(
+        scenario,
+        n_traj=n_traj,
+        shift_T=shift_T,
+        shift_E=shift_E,
+        shift_O=shift_O,
     )
     warn_if_any_initial_conditions_outside(initial_conditions, DEFAULT_BOUNDS)
     result = run_scenario(
@@ -77,4 +121,7 @@ def run_single_scenario(scenario: Dict, *, n_traj: int, shift_T: float = 1.0, sh
         noise_scale=noise_scale,
         initial_conditions=initial_conditions,
     )
+    result["base_x0_center"] = base_x0_center
+    result["x0_center"] = x0_center
+    result["noise_scale"] = noise_scale
     return result
