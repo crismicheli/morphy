@@ -110,10 +110,6 @@ def classify_state(
 
     candidate = base_label
 
-    if not inside and base_label != "Apoptosis":
-        if mem.outside_viability_count <= grace_outside_steps and recovery > 0.0:
-            candidate = "Undetermined"
-
     if base_label == "Apoptosis":
         if inside:
             candidate = "Undetermined"
@@ -129,11 +125,13 @@ def classify_state(
         if candidate == mem.last_label:
             final = candidate
         else:
-            recent_match = sum(1 for x in mem.history if x == candidate)
-            if recent_match >= switch_persistence_steps - 1:
+            recent_match = sum(1 for x in mem.base_history if x == candidate)
+            if candidate != "Undetermined" and recent_match >= switch_persistence_steps - 1:
+                final = candidate
+            elif mem.last_label == "Undetermined":
                 final = candidate
             else:
-                final = mem.last_label if mem.last_label != "Undetermined" else candidate
+                final = "Undetermined"
 
     if final == mem.last_label:
         mem.dwell_count += 1
