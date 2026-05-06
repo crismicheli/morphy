@@ -19,21 +19,21 @@ for p in (str(PACKAGEPARENT), str(REPOROOT)):
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.scenario_helpers import choose_scenario, run_single_scenario, scenario_slug
-from classifiers import taxonomy_classifier, temporal_taxonomy_classifier, state_machine_classifier
+from classifiers import static_classifier, temporal_static_classifier, state_machine_classifier
 
 
 PANEL_SPECS = [
     (
         "Static classifier",
-        taxonomy_classifier.classify_state,
+        static_classifier.classify_state,
         lambda: None,
-        taxonomy_classifier.STATE_COLORS,
+        static_classifier.STATE_COLORS,
     ),
     (
         "Temporal classifier",
-        temporal_taxonomy_classifier.classify_state,
-        temporal_taxonomy_classifier.reset_classifier_memory,
-        temporal_taxonomy_classifier.STATE_COLORS,
+        temporal_static_classifier.classify_state,
+        temporal_static_classifier.reset_classifier_memory,
+        temporal_static_classifier.STATE_COLORS,
     ),
     (
         "State-machine classifier",
@@ -199,7 +199,7 @@ def main() -> None:
 
     fig = plt.figure(figsize=(18, 6))
     all_labels = []
-    color_map = taxonomy_classifier.STATE_COLORS
+    color_map = static_classifier.STATE_COLORS
 
     for i, (title, classifier_fn, reset_fn, cmap) in enumerate(PANEL_SPECS, start=1):
         ax = fig.add_subplot(1, 3, i, projection="3d")
