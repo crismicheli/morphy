@@ -19,7 +19,7 @@ for p in (str(PACKAGEPARENT), str(REPOROOT)):
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.scenario_helpers import choose_scenario, run_single_scenario, scenario_slug
-from classifiers import static_classifier, temporal_static_classifier, state_machine_classifier
+from classifiers import static_classifier, temporal_classifier, state_machine_classifier
 
 
 PANEL_SPECS = [
@@ -31,9 +31,9 @@ PANEL_SPECS = [
     ),
     (
         "Temporal classifier",
-        temporal_static_classifier.classify_state,
-        temporal_static_classifier.reset_classifier_memory,
-        temporal_static_classifier.STATE_COLORS,
+        temporal_classifier.classify_state,
+        temporal_classifier.reset_classifier_memory,
+        temporal_classifier.STATE_COLORS,
     ),
     (
         "State-machine classifier",
