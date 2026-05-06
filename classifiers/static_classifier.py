@@ -195,7 +195,7 @@ def _is_apoptosis_state(
     high_oxygen_burden = ctx["oxygen_burden"] > cfg.oxygen_burden_high
     high_decay_burden = ctx["decay_burden"] > cfg.decay_burden_high
 
-    # original main apoptosis rule
+    # main apoptosis rule: below viability bounds with adverse trends/burdens
     if (O < O_min or C < C_min) and (
         dO < 0
         or dC < 0
@@ -225,7 +225,7 @@ def _is_proliferation_state(
     dT: float,
     dE: float,
     T_min: float,
-    E_max: float,
+    E_max: float,  # kept for symmetry; not explicitly used yet
     O_min: float,
     near_E_high: bool,
     ctx: Dict[str, float],
@@ -258,6 +258,7 @@ def _is_migration_state(
     dO: float,
     T_min: float,
     E_min: float,
+    O_min: float,
     near_O_low: bool,
     ctx: Dict[str, float],
     cfg: StateHeuristics,
@@ -265,14 +266,14 @@ def _is_migration_state(
     strong_tension_damping = ctx["tension_damping"] > cfg.tension_damping_strong
     strong_tension_drive = ctx["tension_drive"] > cfg.tension_drive_strong
 
-    # primary migration rule
+    # primary migration rule: ECM loss with viable oxygen and adequate tension
     if O > O_min and T >= T_min and dE < cfg.dE_migration_cut:
         if abs(dT) < cfg.dT_migration_abs_cut or (
             strong_tension_damping and not strong_tension_drive
         ):
             return True
 
-    # broader ECM-loss pattern
+    # broader ECM-loss pattern, away from oxygen boundary
     if (
         E > E_min
         and dE < 0
@@ -303,7 +304,7 @@ def _is_quiescence_state(
 ) -> bool:
     weak_tension_drive = ctx["tension_drive"] < cfg.tension_drive_weak
 
-    # main quiescence rule
+    # main quiescence rule: moderate region with small derivatives
     if (
         T_min <= T <= 0.75 * T_max
         and E_min <= E <= 0.70 * E_max
@@ -390,8 +391,11 @@ def classify_state(
 ) -> str:
     """
     Classify one instantaneous state into a coarse biological taxonomy.
-    """
 
+    Returns one of:
+        "Apoptosis", "Migration", "Proliferation",
+        "Quiescence", "Diversification", "Undetermined".
+    """
     if cfg is None:
         cfg = StateHeuristics()
 
@@ -412,7 +416,7 @@ def classify_state(
         near_O_low,
     ) = _compute_boundary_flags(C, T, E, O, bounds, cfg)
 
-    # 1. Apoptosis (hard override near boundaries and collapse)
+    # 1. Apoptosis
     if _is_apoptosis_state(
         C=C,
         O=O,
@@ -455,6 +459,7 @@ def classify_state(
         dO=dO,
         T_min=T_min,
         E_min=E_min,
+        O_min=O_min,
         near_O_low=near_O_low,
         ctx=ctx,
         cfg=cfg,
@@ -498,7 +503,7 @@ def classify_state(
     ):
         return "Diversification"
 
-    # 6. Undetermined (boundary-adjacent or unmatched)
+    # 6. Undetermined
     if _is_near_any_bound(
         near_C_low=near_C_low,
         near_T_high=near_T_high,
