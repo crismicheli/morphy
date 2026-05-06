@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Deque, Dict, Optional, Tuple
 
-from .taxonomy_classifier import STATE_COLORS
-from .taxonomy_classifier import classify_state as classify_static_state
+from .static_classifier import STATE_COLORS
+from .static_classifier import classify_state as classify_static_state
 
 
 class FSMState(str, Enum):
