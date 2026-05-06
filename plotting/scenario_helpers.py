@@ -43,15 +43,7 @@ def warn_if_any_initial_conditions_outside(initial_conditions, bounds: Dict) -> 
 def get_base_x0_center(scenario: Dict) -> tuple[np.ndarray, tuple[float, float, float, float]]:
     x0_center = np.array(DEFAULT_SIM["x0_center"], dtype=float)
     noise_scale = (0.03, 0.03, 0.03, 0.05)
-    expected = str(scenario.get("expected", "")).lower()
-    if expected in {"borderline", "boundary"}:
-        x0_center[1] = 1.5
-        x0_center[2] = 1.7
-        noise_scale = (0.04, 0.08, 0.08, 0.06)
-    elif expected == "unstable":
-        x0_center[1] = 1.7
-        x0_center[2] = 1.9
-        noise_scale = (0.05, 0.10, 0.10, 0.07)
+
     return x0_center, noise_scale
 
 
