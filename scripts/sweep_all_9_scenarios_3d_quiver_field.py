@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Dict, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +15,7 @@ if str(ROOT) not in sys.path:
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS
 from plotting.scenario_helpers import choose_scenario
 from viabilitykernels.odes import rhs
-from scripts.plot_helpers import add_viability_box, get_axes_limits
+from scripts.plot_helpers import save_quiver_field_plot
 
 DEFAULT_OUTDIR = ROOT / "figures" / "all_9_scenarios_3d_quiver_field"
 SUMMARY_NAME = "sweep_quiver_field_summary.txt"
@@ -36,7 +35,7 @@ TARGET_SCENARIOS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep 9 scenarios and save static 3D quiver field plots in T-E-O space."
+        description="Sweep 9 scenarios and save static 3D colored quiver field plots in T-E-O space."
     )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUTDIR), help="Directory for saved figures.")
     parser.add_argument("--c-slice", type=float, default=0.20, help="Fixed C value used for the T-E-O field slice.")
@@ -54,10 +53,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quiver-length", type=float, default=0.10, help="Displayed arrow length.")
     parser.add_argument("--quiver-alpha", type=float, default=0.45, help="Quiver transparency.")
     parser.add_argument("--quiver-linewidth", type=float, default=0.7, help="Quiver linewidth.")
-    parser.add_argument("--quiver-color", default="0.20", help="Matplotlib color for arrows.")
     parser.add_argument("--binned-norm", action="store_true", help="Normalize averaged binned vectors after aggregation.")
     parser.add_argument("--bins", type=int, default=8, help="Binning resolution per axis for binned mode.")
     parser.add_argument("--dpi", type=int, default=220, help="Figure DPI.")
+    parser.add_argument("--cmap-name", default="jet", help="Matplotlib colormap name for quiver coloring.")
     parser.add_argument("--dry-run", action="store_true", help="Plan outputs without rendering.")
     return parser.parse_args()
 
@@ -81,7 +80,7 @@ def make_field_grid(
     TT, EE, OO = np.meshgrid(t_vals, e_vals, o_vals, indexing="ij")
     C = np.full_like(TT, float(c_slice))
 
-    points = np.column_stack([
+    points_4d = np.column_stack([
         C.ravel(),
         TT.ravel(),
         EE.ravel(),
@@ -92,7 +91,7 @@ def make_field_grid(
         EE.ravel(),
         OO.ravel(),
     ])
-    return points, teo_origins
+    return points_4d, teo_origins
 
 
 def evaluate_field(points_4d: np.ndarray, *, p: float, par: Dict) -> np.ndarray:
@@ -178,10 +177,10 @@ def plot_quiver_field(
     quiver_length: float,
     quiver_alpha: float,
     quiver_linewidth: float,
-    quiver_color: str,
     bins: int,
     binned_norm: bool,
     dpi: int,
+    cmap_name: str,
 ) -> None:
     effective_par = {**par, **scenario_cfg.get("param_overrides", {})}
     p = scenario_cfg["p"]
@@ -220,63 +219,25 @@ def plot_quiver_field(
     else:
         raise ValueError(f"Unsupported quiver mode: {quiver_mode}")
 
-    fig = plt.figure(figsize=(8.6, 6.8), constrained_layout=True)
-    ax = fig.add_subplot(111, projection="3d")
-
-    tmax_axis, emax_axis, omax_axis = get_axes_limits(bounds)
-    ax.set_xlim(0, max(tmax_axis, float(origins[:, 0].max()) * 1.05 if len(origins) else tmax_axis))
-    ax.set_ylim(0, max(emax_axis, float(origins[:, 1].max()) * 1.05 if len(origins) else emax_axis))
-    ax.set_zlim(0, max(omax_axis, float(origins[:, 2].max()) * 1.05 if len(origins) else omax_axis))
-
-    ax.set_xlabel("Cytoskeletal tension T")
-    ax.set_ylabel("ECM density E")
-    ax.set_zlabel("Oxygen O")
-    ax.view_init(elev=elev, azim=azim)
-    ax.grid(True, alpha=0.25)
-
-    if show_box:
-        add_viability_box(ax, bounds, ax.get_zlim()[1])
-
-    if len(plot_origins) > 0:
-        ax.quiver(
-            plot_origins[:, 0],
-            plot_origins[:, 1],
-            plot_origins[:, 2],
-            plot_vectors[:, 0],
-            plot_vectors[:, 1],
-            plot_vectors[:, 2],
-            length=quiver_length,
-            normalize=False,
-            color=quiver_color,
-            alpha=quiver_alpha,
-            linewidth=quiver_linewidth,
-        )
-
-    ax.set_title(
-        f"{scenario_cfg['label']} | 3D quiver field in T-E-O at C={c_slice:.2f} ({mode})",
-        fontsize=13,
-        fontweight="bold",
+    save_quiver_field_plot(
+        scenario_cfg,
+        plot_origins,
+        plot_vectors,
+        output_path,
+        bounds=bounds,
+        c_slice=c_slice,
+        elev=elev,
+        azim=azim,
+        show_box=show_box,
+        quiver_mode=quiver_mode,
+        quiver_length=quiver_length,
+        quiver_alpha=quiver_alpha,
+        quiver_linewidth=quiver_linewidth,
+        bins=bins,
+        binned_norm=binned_norm,
+        dpi=dpi,
+        cmap_name=cmap_name,
     )
-
-    info = (
-        f"p = {p:.3f}\n"
-        f"grid = {nT}×{nE}×{nO}\n"
-        f"vectors = {len(plot_origins)}"
-    )
-    ax.text2D(
-        0.98,
-        0.04,
-        info,
-        transform=ax.transAxes,
-        va="bottom",
-        ha="right",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.82", alpha=0.92),
-    )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=dpi)
-    plt.close(fig)
 
 
 def expected_output(out_dir: Path, slug: str, mode: str) -> Path:
@@ -300,7 +261,8 @@ def main() -> None:
             f"[{total:02d}/09] {scenario_cfg['label']} | "
             f"p={scenario_cfg['p']:.4f} | "
             f"mode={args.quiver_mode} | "
-            f"C-slice={args.c_slice:.3f}"
+            f"C-slice={args.c_slice:.3f} | "
+            f"cmap={args.cmap_name}"
         )
         saved_line = f"Expected output: {output_path}"
         print(header)
@@ -330,10 +292,10 @@ def main() -> None:
             quiver_length=args.quiver_length,
             quiver_alpha=args.quiver_alpha,
             quiver_linewidth=args.quiver_linewidth,
-            quiver_color=args.quiver_color,
             bins=args.bins,
             binned_norm=args.binned_norm,
             dpi=args.dpi,
+            cmap_name=args.cmap_name,
         )
 
     summary_path = out_dir / SUMMARY_NAME
