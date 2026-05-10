@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import DEFAULT_BOUNDS, DEFAULT_PAR
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS
 from plotting.scenario_helpers import choose_scenario
 from viabilitykernels.odes import rhs
 from scripts.plot_helpers import add_viability_box, get_axes_limits
@@ -314,7 +314,7 @@ def main() -> None:
             scenario_cfg,
             output_path,
             bounds=DEFAULT_BOUNDS,
-            par=DEFAULT_PAR,
+            par=DEFAULT_PARAMS,
             c_slice=args.c_slice,
             nT=args.nT,
             nE=args.nE,
