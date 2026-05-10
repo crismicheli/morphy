@@ -351,23 +351,22 @@ def save_quiver_field_plot(
             vmax = vmin + 1e-12
 
         norm = colors.Normalize(vmin=vmin, vmax=vmax)
-        cmap = plt.colormaps[cmap_name]
+        cmap = cm.get_cmap(cmap_name)
         arrow_colors = cmap(norm(color_values))
 
-        for p0, v0, c0 in zip(plot_origins, plot_vectors, arrow_colors):
-            ax.quiver(
-                [p0[0]],
-                [p0[1]],
-                [p0[2]],
-                [v0[0]],
-                [v0[1]],
-                [v0[2]],
-                length=quiver_length,
-                normalize=False,
-                color=[c0],
-                alpha=quiver_alpha,
-                linewidth=quiver_linewidth,
-            )
+        ax.quiver(
+            plot_origins[:, 0],
+            plot_origins[:, 1],
+            plot_origins[:, 2],
+            plot_vectors[:, 0],
+            plot_vectors[:, 1],
+            plot_vectors[:, 2],
+            length=quiver_length,
+            normalize=False,
+            colors=arrow_colors,
+            alpha=quiver_alpha,
+            linewidth=quiver_linewidth,
+        )
 
         sm = cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
