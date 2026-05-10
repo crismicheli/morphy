@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS
 from plotting.scenario_helpers import choose_scenario
 from viabilitykernels.odes import rhs
-from plotting.plot_helpers import save_quiver_field_plot
+from scripts.plot_helpers import save_quiver_field_plot
 
 DEFAULT_OUTDIR = ROOT / "figures" / "all_9_scenarios_3d_quiver_field"
 SUMMARY_NAME = "sweep_quiver_field_summary.txt"
@@ -102,60 +102,6 @@ def evaluate_field(points_4d: np.ndarray, *, p: float, par: Dict) -> np.ndarray:
     return vecs
 
 
-def normalize_vectors(vectors: np.ndarray) -> np.ndarray:
-    if len(vectors) == 0:
-        return vectors
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms = np.maximum(norms, 1e-12)
-    return vectors / norms
-
-
-def bin_field(
-    origins: np.ndarray,
-    vectors: np.ndarray,
-    *,
-    bins: int,
-    renormalize: bool = False,
-) -> Tuple[np.ndarray, np.ndarray]:
-    if len(origins) == 0:
-        return origins, vectors
-
-    bins_arr = np.array([bins, bins, bins], dtype=int)
-    mins = origins.min(axis=0)
-    maxs = origins.max(axis=0)
-    spans = np.maximum(maxs - mins, 1e-12)
-
-    idx = np.floor((origins - mins) / spans * bins_arr).astype(int)
-    idx = np.clip(idx, 0, bins_arr - 1)
-
-    bucket = {}
-    for p0, v0, key in zip(origins, vectors, map(tuple, idx)):
-        if key not in bucket:
-            bucket[key] = {"p": [], "v": []}
-        bucket[key]["p"].append(p0)
-        bucket[key]["v"].append(v0)
-
-    p_out = []
-    v_out = []
-    for item in bucket.values():
-        p_mean = np.mean(np.vstack(item["p"]), axis=0)
-        v_mean = np.mean(np.vstack(item["v"]), axis=0)
-        if np.linalg.norm(v_mean) > 1e-12:
-            p_out.append(p_mean)
-            v_out.append(v_mean)
-
-    if not p_out:
-        return np.empty((0, 3)), np.empty((0, 3))
-
-    p_out = np.vstack(p_out)
-    v_out = np.vstack(v_out)
-
-    if renormalize:
-        v_out = normalize_vectors(v_out)
-
-    return p_out, v_out
-
-
 def plot_quiver_field(
     scenario_cfg: dict,
     output_path: Path,
@@ -202,27 +148,10 @@ def plot_quiver_field(
     origins = origins[keep]
     vectors = vectors[keep]
 
-    mode = quiver_mode.lower()
-    if mode == "raw":
-        plot_origins = origins
-        plot_vectors = vectors
-    elif mode == "normalized":
-        plot_origins = origins
-        plot_vectors = normalize_vectors(vectors)
-    elif mode == "binned":
-        plot_origins, plot_vectors = bin_field(
-            origins,
-            normalize_vectors(vectors),
-            bins=bins,
-            renormalize=binned_norm,
-        )
-    else:
-        raise ValueError(f"Unsupported quiver mode: {quiver_mode}")
-
     save_quiver_field_plot(
         scenario_cfg,
-        plot_origins,
-        plot_vectors,
+        origins,
+        vectors,
         output_path,
         bounds=bounds,
         c_slice=c_slice,
