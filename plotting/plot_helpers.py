@@ -131,6 +131,142 @@ def aggregate(values: np.ndarray, mode: str) -> float:
     raise ValueError(mode)
 
 
+def _trajectory_points_3d(sol) -> np.ndarray:
+    return np.column_stack([sol.y[1], sol.y[2], sol.y[3]])
+
+
+def _collect_quiver_samples(
+    solutions,
+    *,
+    step: int = 5,
+) -> Tuple[np.ndarray, np.ndarray]:
+    origins_all = []
+    vectors_all = []
+
+    step = max(1, int(step))
+
+    for sol in solutions:
+        pts = _trajectory_points_3d(sol)
+        if pts.shape[0] < 2:
+            continue
+
+        origins = pts[:-1:step]
+        ends = pts[1::step]
+        n = min(len(origins), len(ends))
+        if n == 0:
+            continue
+
+        origins = origins[:n]
+        vectors = ends[:n] - origins
+
+        keep = np.linalg.norm(vectors, axis=1) > 1e-12
+        if np.any(keep):
+            origins_all.append(origins[keep])
+            vectors_all.append(vectors[keep])
+
+    if not origins_all:
+        return np.empty((0, 3)), np.empty((0, 3))
+
+    return np.vstack(origins_all), np.vstack(vectors_all)
+
+
+def _normalize_quiver_vectors(vectors: np.ndarray) -> np.ndarray:
+    if len(vectors) == 0:
+        return vectors
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-12)
+    return vectors / norms
+
+
+def _bin_quiver_field(
+    origins: np.ndarray,
+    vectors: np.ndarray,
+    *,
+    bins: int | Tuple[int, int, int] = 10,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if len(origins) == 0:
+        return origins, vectors
+
+    if isinstance(bins, int):
+        bins = (bins, bins, bins)
+
+    bins_arr = np.asarray(bins, dtype=int)
+    mins = origins.min(axis=0)
+    maxs = origins.max(axis=0)
+    spans = np.maximum(maxs - mins, 1e-12)
+
+    idx = np.floor((origins - mins) / spans * bins_arr).astype(int)
+    idx = np.clip(idx, 0, bins_arr - 1)
+
+    bucket: Dict[Tuple[int, int, int], Dict[str, List[np.ndarray]]] = {}
+    for p, v, key in zip(origins, vectors, map(tuple, idx)):
+        if key not in bucket:
+            bucket[key] = {"p": [], "v": []}
+        bucket[key]["p"].append(p)
+        bucket[key]["v"].append(v)
+
+    out_origins = []
+    out_vectors = []
+    for item in bucket.values():
+        p = np.mean(np.vstack(item["p"]), axis=0)
+        v = np.mean(np.vstack(item["v"]), axis=0)
+        if np.linalg.norm(v) > 1e-12:
+            out_origins.append(p)
+            out_vectors.append(v)
+
+    if not out_origins:
+        return np.empty((0, 3)), np.empty((0, 3))
+
+    return np.vstack(out_origins), np.vstack(out_vectors)
+
+
+def add_quiver_overlay(
+    ax,
+    solutions,
+    *,
+    mode: str = "normalized",
+    step: int = 5,
+    bins: int | Tuple[int, int, int] = 10,
+    length: float = 0.10,
+    color: str = "0.25",
+    alpha: float = 0.35,
+    linewidth: float = 0.6,
+):
+    origins, vectors = _collect_quiver_samples(solutions, step=step)
+    if len(origins) == 0:
+        return None
+
+    mode = mode.lower()
+
+    if mode == "raw":
+        plot_vectors = vectors
+    elif mode == "normalized":
+        plot_vectors = _normalize_quiver_vectors(vectors)
+    elif mode == "binned":
+        norm_vectors = _normalize_quiver_vectors(vectors)
+        origins, plot_vectors = _bin_quiver_field(origins, norm_vectors, bins=bins)
+        plot_vectors = _normalize_quiver_vectors(plot_vectors)
+    else:
+        raise ValueError(f"Unsupported quiver mode: {mode}")
+
+    if len(origins) == 0:
+        return None
+
+    return ax.quiver(
+        origins[:, 0],
+        origins[:, 1],
+        origins[:, 2],
+        plot_vectors[:, 0],
+        plot_vectors[:, 1],
+        plot_vectors[:, 2],
+        length=length,
+        normalize=False,
+        color=color,
+        alpha=alpha,
+        linewidth=linewidth,
+    )
+
+
 def save_taxonomy_plot(
     result: Dict,
     scenario_cfg: Dict,
@@ -223,6 +359,14 @@ def save_trajectory_animation(
     azim: float = -58.0,
     show_box: bool = False,
     c_stat: str = "mean",
+    show_quiver: bool = False,
+    quiver_mode: str = "normalized",
+    quiver_step: int = 5,
+    quiver_bins: int | Tuple[int, int, int] = 10,
+    quiver_length: float = 0.10,
+    quiver_color: str = "0.25",
+    quiver_alpha: float = 0.35,
+    quiver_linewidth: float = 0.6,
 ) -> None:
     solutions = result["solutions"]
     label = result["label"]
@@ -245,6 +389,20 @@ def save_trajectory_animation(
     if show_box:
         add_viability_box(ax, bounds, omax_axis)
 
+    quiver_artist = None
+    if show_quiver:
+        quiver_artist = add_quiver_overlay(
+            ax,
+            solutions,
+            mode=quiver_mode,
+            step=quiver_step,
+            bins=quiver_bins,
+            length=quiver_length,
+            color=quiver_color,
+            alpha=quiver_alpha,
+            linewidth=quiver_linewidth,
+        )
+
     segment_color_lists = [segment_colors_for_solution(sol, bounds) for sol in solutions]
 
     line_collections = []
@@ -256,114 +414,4 @@ def save_trajectory_animation(
         O0 = float(sol.y[3, 0])
 
         inside0 = point_inside_eto_box(T0, E0, O0, bounds)
-        seed_segments = np.array([[[T0, E0, O0], [T0, E0, O0]]])
-
-        lc = Line3DCollection(seed_segments, linewidths=1.7, alpha=0.90)
-        lc.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
-        ax.add_collection3d(lc)
-
-        point, = ax.plot(
-            [T0], [E0], [O0],
-            "o",
-            ms=4.2,
-            color=INSIDE_COLOR if inside0 else OUTSIDE_COLOR,
-            zorder=6,
-        )
-        line_collections.append(lc)
-        points.append(point)
-
-    fig.suptitle(
-        f"{label} ensemble in the 3D T, E, O phenotype space",
-        fontsize=13,
-        fontweight="bold",
-    )
-
-    frame_text = ax.text2D(
-        0.02,
-        0.92,
-        "t = 0.00",
-        transform=ax.transAxes,
-        va="top",
-        ha="left",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.85", alpha=0.88),
-    )
-    c_text = ax.text2D(
-        0.98,
-        0.06,
-        f"C {c_stat} = 0.000",
-        transform=ax.transAxes,
-        va="bottom",
-        ha="right",
-        fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.8", alpha=0.94),
-    )
-
-    def init():
-        for sol, lc, point in zip(solutions, line_collections, points):
-            T0 = float(sol.y[1, 0])
-            E0 = float(sol.y[2, 0])
-            O0 = float(sol.y[3, 0])
-
-            inside0 = point_inside_eto_box(T0, E0, O0, bounds)
-            seed_segments = np.array([[[T0, E0, O0], [T0, E0, O0]]])
-
-            lc.set_segments(seed_segments)
-            lc.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
-
-            point.set_data([T0], [E0])
-            point.set_3d_properties([O0])
-            point.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
-
-        frame_text.set_text("t = 0.00")
-        c_text.set_text(f"C {c_stat} = 0.000")
-        return [*line_collections, *points, frame_text, c_text]
-
-    def update(frame: int):
-        t_now = solutions[0].t[frame]
-        c_now = np.array([sol.y[0, frame] for sol in solutions], dtype=float)
-        c_val = aggregate(c_now, c_stat)
-
-        for sol, lc, point, segcolors in zip(solutions, line_collections, points, segment_color_lists):
-            segments = build_line_segments_3d(sol, frame)
-
-            if len(segments) == 0:
-                T0 = float(sol.y[1, 0])
-                E0 = float(sol.y[2, 0])
-                O0 = float(sol.y[3, 0])
-
-                inside0 = point_inside_eto_box(T0, E0, O0, bounds)
-                seed_segments = np.array([[[T0, E0, O0], [T0, E0, O0]]])
-
-                lc.set_segments(seed_segments)
-                lc.set_color(INSIDE_COLOR if inside0 else OUTSIDE_COLOR)
-            else:
-                lc.set_segments(segments)
-                lc.set_color(segcolors[: len(segments)])
-
-            T_now = float(sol.y[1, frame])
-            E_now = float(sol.y[2, frame])
-            O_now = float(sol.y[3, frame])
-
-            point.set_data([T_now], [E_now])
-            point.set_3d_properties([O_now])
-            point.set_color(
-                INSIDE_COLOR if point_inside_eto_box(T_now, E_now, O_now, bounds) else OUTSIDE_COLOR
-            )
-
-        frame_text.set_text(f"t = {t_now:.2f}")
-        c_text.set_text(f"C {c_stat} = {c_val:.3f}")
-        return [*line_collections, *points, frame_text, c_text]
-
-    anim = FuncAnimation(
-        fig,
-        update,
-        init_func=init,
-        frames=ntime,
-        interval=1000 / max(fps, 1),
-        blit=False,
-    )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    anim.save(output_path, writer=PillowWriter(fps=fps))
-    plt.close(fig)
+        seed_segments 
