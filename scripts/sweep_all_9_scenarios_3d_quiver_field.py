@@ -1,5 +1,91 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+"""
+Sweep all 9 morphodynamic scenarios and save static 3D quiver-field plots
+in T-E-O space at a fixed C slice.
+
+What this script does
+---------------------
+- Iterates over the 9 predefined scenarios in TARGET_SCENARIOS.
+- Builds a regular grid in (T, E, O) at fixed C = --c-slice.
+- Evaluates the model RHS on that 4D state grid.
+- Extracts the local vector field components (dT, dE, dO).
+- Saves one 3D quiver plot per scenario.
+
+Typical usage
+-------------
+1) Standard normalized quiver sweep:
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode normalized \
+       --c-slice 0.20
+
+2) Thicker and more visible arrows:
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode normalized \
+       --c-slice 0.20 \
+       --quiver-linewidth 2.0 \
+       --quiver-alpha 0.8 \
+       --quiver-length 0.14
+
+3) Raw vectors (arrow lengths reflect local magnitude):
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode raw \
+       --c-slice 0.20 \
+       --quiver-linewidth 1.5
+
+4) Cleaner, aggregated field:
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode binned \
+       --bins 6 \
+       --binned-norm \
+       --c-slice 0.20 \
+       --quiver-linewidth 2.0
+
+5) Explore another C slice:
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode normalized \
+       --c-slice 0.40
+
+6) Denser field sampling:
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py \
+       --show-box \
+       --quiver-mode normalized \
+       --c-slice 0.20 \
+       --nT 13 --nE 13 --nO 9
+
+7) Dry run only (plan outputs, do not render):
+   python scripts/sweep_all_9_scenarios_3d_quiver_field.py --dry-run
+
+Main options
+------------
+--c-slice            Fixed value of C used to define the T-E-O slice.
+--nT, --nE, --nO     Grid resolution along T, E, and O.
+--t-pad, --e-pad     Extra padding around T/E bounds when building the grid.
+--o-min, --o-max     O range for the sampled field.
+--quiver-mode        One of: raw, normalized, binned.
+--quiver-length      Displayed arrow length.
+--quiver-alpha       Arrow transparency.
+--quiver-linewidth   Arrow thickness.
+--bins               Number of bins per axis in binned mode.
+--binned-norm        Renormalize averaged vectors after binning.
+--elev, --azim       3D camera angles.
+--show-box           Show translucent viability box.
+--out-dir            Output directory for saved figures.
+--dry-run            Print planned outputs without rendering.
+
+Notes
+-----
+- A good default C slice is 0.20 because the default simulation center uses C=0.20.
+- If arrows are hard to see, first increase:
+    --quiver-linewidth 2.0 --quiver-alpha 0.8 --quiver-length 0.14
+- If the field is too crowded, use:
+    --quiver-mode binned --bins 6 --binned-norm
+"""
 
 import argparse
 import sys
