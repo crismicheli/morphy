@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS
 from plotting.scenario_helpers import choose_scenario
 from viabilitykernels.odes import rhs
-from scripts.plot_helpers import add_viability_box, get_axes_limits
+from plotting.plot_helpers import add_viability_box, get_axes_limits
 
 DEFAULT_OUTDIR = ROOT / "figures" / "all_9_scenarios_3d_quiver_field"
 SUMMARY_NAME = "sweep_quiver_field_summary.txt"
