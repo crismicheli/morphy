@@ -352,7 +352,10 @@ def save_quiver_field_plot(
 
         norm = colors.Normalize(vmin=vmin, vmax=vmax)
         cmap = cm.get_cmap(cmap_name)
-        arrow_colors = cmap(norm(color_values))
+        base_colors = cmap(norm(color_values))
+
+        repeated_colors = np.repeat(base_colors, 3, axis=0)
+        repeated_colors[:, 3] *= quiver_alpha
 
         ax.quiver(
             plot_origins[:, 0],
@@ -363,8 +366,7 @@ def save_quiver_field_plot(
             plot_vectors[:, 2],
             length=quiver_length,
             normalize=False,
-            colors=arrow_colors,
-            alpha=quiver_alpha,
+            colors=repeated_colors,
             linewidth=quiver_linewidth,
         )
 
