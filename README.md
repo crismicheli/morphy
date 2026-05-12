@@ -17,29 +17,51 @@ At the moment, the internal Python package is named `viabilitykernels`, while th
 
 ```text
 morphy/
-├── pyproject.toml
-├── README.md
-├── .gitignore
-├── viabilitykernels/
-│   ├── __init__.py
-│   ├── odes.py
-│   ├── viability.py
-│   ├── simulation.py
-│   └── phase_plane.py
-├── config/
-│   ├── __init__.py
-│   ├── default_params.py
-│   └── scenarios.py
-├── scripts/
-│   └── run_scenarios.py
-├── figures/
-│   └── .gitkeep
-├── notebooks/
-│   └── .gitkeep
-├── tests/
-│   └── .gitkeep
-└── docs/
-    └── .gitkeep
+    ├── README.md
+    ├── pyproject.toml
+    ├── classifiers/
+    │   ├── classifier_dispatch.py
+    │   ├── state_machine_classifier.py
+    │   ├── state_machine_classifier_logic.md
+    │   ├── static_classifier.py
+    │   ├── static_classifier_logic.md
+    │   ├── temporal_classifier.py
+    │   └── temporal_classifier_logic.md
+    ├── config/
+    │   ├── __init__.py
+    │   ├── default_params.py
+    │   └── scenarios.py
+    ├── notebooks/
+    │   └── morphy_scenarios.ipynb
+    ├── plotting/
+    │   ├── plot2d_helpers.py
+    │   ├── plot_helpers.py
+    │   └── scenario_helpers.py
+    ├── scripts/
+    │   ├── animate_scenario_2d.py
+    │   ├── animate_scenario_3d.py
+    │   ├── plot_scenario_3d_taxonomy.py
+    │   ├── run_scenarios_2d.py
+    │   ├── run_scenarios_3d.py
+    │   ├── single_scenario_3d.py
+    │   ├── single_scenario_3d_3classifiers.py
+    │   ├── sweep_all_9_scenarios_3classifiers.py
+    │   ├── sweep_all_9_scenarios_3d_animation.py
+    │   ├── sweep_all_9_scenarios_3d_quiver_field.py
+    │   └── docs/
+    │       ├── animate_scenario_2d.md
+    │       ├── animate_scenario_3d.md
+    │       ├── current_figure_calls.md
+    │       ├── plot_scenario_3d_taxonomy.md
+    │       ├── run_scenarios_2d.md
+    │       ├── run_scenarios_3d.md
+    │       └── single_scenario_3d.md
+    └── viabilitykernels/
+        ├── __init__.py
+        ├── odes.py
+        ├── phase_plane.py
+        ├── simulation.py
+        └── viability.py
 ```
 
 The top-level structure follows a common Python-project pattern: importable source code lives in package directories, executable utilities live in `scripts/`, and exploratory or generated material lives in dedicated project folders rather than inside the package itself.
