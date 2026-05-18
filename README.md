@@ -14,6 +14,7 @@ At the moment, the internal Python package is named `viabilitykernels`, while th
 - A command-line script for running scenario batches and optionally saving figures.
 
 ## Repository structure
+Generated with [gitingest](https://gitingest.com/)
 
 ```text
 morphy/
