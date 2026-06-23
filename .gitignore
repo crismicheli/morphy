@@ -1,0 +1,15 @@
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Packaging / build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+morphy.egg-info/
+
+# Generated figures
+figures/
