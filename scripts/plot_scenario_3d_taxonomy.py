@@ -1,3 +1,10 @@
+"""
+Plot 3D trajectories for one scenario colored by phenotype label.
+FIXME: select any 3 variables + bounds
+
+Usage example:
+    python scripts/make_single_plot_3d_phenotype_labels.py --filter "Intermediate porosity" --n-traj 40 --x0 0.50 0.90 0.70 0.55 --show-box
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
