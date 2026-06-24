@@ -1,3 +1,17 @@
+"""
+Generate 3D phenotype-label figures for 27 cases across 9 scenarios and save the visualization settings.
+FIXME: do it for any 3 vars and bounds
+
+For each of the 9 scenarios, the script automatically selects three initial-point regimes:
+inside the viability bounds, inside but near the viability boundary, and outside
+the viability boundary. This produces 27 cases in total. For each case, it creates one
+figure that shows the phenotype labels from all 3 classifiers side by side, and it saves
+the selected initial points and visualization parameters to an output text file.
+
+Usage example:
+    python scripts/batch_9scenarios_compare_3d_phenotype_labels_with_summary.py \
+        --out-dir figures/all_9_compare_3d --show-box
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
