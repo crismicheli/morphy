@@ -25,9 +25,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=10, help="Frames per second for the GIF.")
     parser.add_argument("--max-frames", type=int, default=160, help="Maximum number of animation frames to render.")
     parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories to simulate.")
-    parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to the initial T center.")
-    parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to the initial E center.")
-    parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to the initial O center.")
+    parser.add_argument(
+        "--x0",
+        type=float,
+        nargs=4,
+        metavar=("C", "T", "E", "O"),
+        default=None,
+        help="Explicit initial center as a 4D point in (C, T, E, O) order. If omitted, DEFAULT_SIM['x0_center'] is used.",
+    )
     parser.add_argument("--hide-box", action="store_true", help="Hide the ET viability rectangle.")
     return parser.parse_args()
 
@@ -38,9 +43,7 @@ def main() -> None:
     result = run_single_scenario(
         scenario,
         n_traj=args.n_traj,
-        shift_T=args.shift_T,
-        shift_E=args.shift_E,
-        shift_O=args.shift_O,
+        x0_center=args.x0,
     )
 
     if args.output:
