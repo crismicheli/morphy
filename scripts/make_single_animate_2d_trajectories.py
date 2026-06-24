@@ -1,3 +1,12 @@
+"""
+Render a 2D trajectory animation for one scenario.
+FIXME: add selection of plane and viability bounds 
+
+Usage example:
+    python scripts/make_single_animate_2d_trajectories.py --filter "Hypoxic environment" --n-traj 28 --x0 0.50 1.10 0.95 0.30
+"""
+
+
 #!/usr/bin/env python3
 from __future__ import annotations
 
