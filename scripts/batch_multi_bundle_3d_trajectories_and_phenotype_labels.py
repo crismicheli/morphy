@@ -1,3 +1,9 @@
+"""
+Generate 3D trajectory animations and phenotype-label plots for multiple scenarios.
+
+Usage example:
+    python scripts/batch_multi_bundle_3d_trajectories_and_phenotype_labels.py --out-dir figures/scenario_batch_3d --show-box
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
