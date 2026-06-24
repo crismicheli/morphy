@@ -36,9 +36,14 @@ def parse_args() -> argparse.Namespace:
         help="Classifier backend.",
     )
     p.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
-    p.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
-    p.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
-    p.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
+    p.add_argument(
+        "--x0",
+        type=float,
+        nargs=4,
+        metavar=("C", "T", "E", "O"),
+        default=None,
+        help="Explicit initial center as a 4D point in (C, T, E, O) order. If omitted, DEFAULT_SIM['x0_center'] is used.",
+    )
     p.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     p.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
     p.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
@@ -59,9 +64,7 @@ def main() -> None:
     result = run_single_scenario(
         scenario,
         n_traj=args.n_traj,
-        shift_T=args.shift_T,
-        shift_E=args.shift_E,
-        shift_O=args.shift_O,
+        x0_center=args.x0,
     )
     classifier_fn, reset_fn, state_colors = get_classifier_components(args.classifier_type)
 
