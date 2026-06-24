@@ -1,3 +1,9 @@
+"""
+Generate a 3D trajectory animation and phenotype-label plot for one scenario.
+FIXME: choose any 3 vars + bounds
+Usage example:
+    python scripts/make_single_bundle_3d_trajectories_and_phenotype_labels.py --filter "Enhanced guidance" --n-traj 36 --x0 0.50 0.85 0.75 0.60 --show-box
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
