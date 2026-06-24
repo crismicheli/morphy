@@ -65,9 +65,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prefix", default=None, help="Optional filename prefix; defaults to scenario label slug.")
     parser.add_argument("--n-traj", type=int, default=DEFAULT_SIM["n_traj"], help="Number of trajectories.")
-    parser.add_argument("--shift-T", type=float, default=1.0, help="Multiplier applied to initial T center.")
-    parser.add_argument("--shift-E", type=float, default=1.0, help="Multiplier applied to initial E center.")
-    parser.add_argument("--shift-O", type=float, default=1.0, help="Multiplier applied to initial O center.")
+    parser.add_argument(
+        "--x0",
+        type=float,
+        nargs=4,
+        metavar=("C", "T", "E", "O"),
+        default=None,
+        help="Explicit initial center as a 4D point in (C, T, E, O) order. If omitted, DEFAULT_SIM['x0_center'] is used.",
+    )
     parser.add_argument("--elev", type=float, default=24.0, help="3D camera elevation.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth.")
     parser.add_argument("--show-box", action="store_true", help="Show translucent ETO viability box.")
@@ -98,8 +103,6 @@ def collect_points(result: dict, stride: int):
             dC, dT, dE, dO = [float(v) for v in dydt[:, i]]
             all_points.append((C, T, E, O, dC, dT, dE, dO))
     return all_points
-
-
 
 
 BOX_GREEN = "#4dac26"
@@ -137,6 +140,7 @@ def draw_viability_box(ax, bounds: dict):
         alpha=0.08,
     )
     ax.add_collection3d(box)
+
 
 def classify_points(points, classifier_fn, reset_fn, scenario_cfg):
     reset_fn()
@@ -180,9 +184,7 @@ def main() -> None:
     result = run_single_scenario(
         scenario,
         n_traj=args.n_traj,
-        shift_T=args.shift_T,
-        shift_E=args.shift_E,
-        shift_O=args.shift_O,
+        x0_center=args.x0,
     )
 
     outdir = Path(args.out_dir)
