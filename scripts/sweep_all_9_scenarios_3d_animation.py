@@ -29,8 +29,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_summary_calls(summary_text: str) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
+def parse_summary_calls(summary_text: str) -> list[dict[str, str | list[str]]]:
+    entries: list[dict[str, str | list[str]]] = []
     lines = [line.strip() for line in summary_text.splitlines()]
     i = 0
     while i < len(lines):
@@ -40,26 +40,30 @@ def parse_summary_calls(summary_text: str) -> list[dict[str, str]]:
             continue
         if i + 1 >= len(lines):
             break
+
         call_line = lines[i + 1]
         filter_match = re.search(r"--filter\s+(.+?)\s+--prefix\s+", call_line)
         prefix_match = re.search(r"--prefix\s+([^\s]+)", call_line)
         ntraj_match = re.search(r"--n-traj\s+([^\s]+)", call_line)
-        shift_t_match = re.search(r"--shift-T\s+([^\s]+)", call_line)
-        shift_e_match = re.search(r"--shift-E\s+([^\s]+)", call_line)
-        shift_o_match = re.search(r"--shift-O\s+([^\s]+)", call_line)
+        x0_match = re.search(r"--x0\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)", call_line)
         elev_match = re.search(r"--elev\s+([^\s]+)", call_line)
         azim_match = re.search(r"--azim\s+([^\s]+)", call_line)
         show_box = "--show-box" in call_line
-        if not all([filter_match, prefix_match, ntraj_match, shift_t_match, shift_e_match, shift_o_match, elev_match, azim_match]):
+
+        if not all([filter_match, prefix_match, ntraj_match, x0_match, elev_match, azim_match]):
             raise ValueError(f"Could not parse summary call line: {call_line}")
+
         entries.append(
             {
                 "filter": filter_match.group(1),
                 "prefix": prefix_match.group(1),
                 "n_traj": ntraj_match.group(1),
-                "shift_T": shift_t_match.group(1),
-                "shift_E": shift_e_match.group(1),
-                "shift_O": shift_o_match.group(1),
+                "x0": [
+                    x0_match.group(1),
+                    x0_match.group(2),
+                    x0_match.group(3),
+                    x0_match.group(4),
+                ],
                 "elev": elev_match.group(1),
                 "azim": azim_match.group(1),
                 "show_box": "1" if show_box else "0",
@@ -69,13 +73,16 @@ def parse_summary_calls(summary_text: str) -> list[dict[str, str]]:
     return entries
 
 
-def build_animation_command(args: argparse.Namespace, entry: dict[str, str]) -> tuple[list[str], Path]:
+def build_animation_command(args: argparse.Namespace, entry: dict[str, str | list[str]]) -> tuple[list[str], Path]:
     output_path = Path(args.out_dir) / f"{entry['prefix']}_3d.gif"
+    x0 = entry["x0"]
+    assert isinstance(x0, list)
+
     cmd = [
         args.python,
         str(ANIMATE_SCRIPT),
         "--filter",
-        entry["filter"],
+        str(entry["filter"]),
         "--output",
         str(output_path),
         "--fps",
@@ -83,17 +90,13 @@ def build_animation_command(args: argparse.Namespace, entry: dict[str, str]) -> 
         "--max-frames",
         str(min(args.max_frames, 100)),
         "--n-traj",
-        entry["n_traj"],
-        "--shift-T",
-        entry["shift_T"],
-        "--shift-E",
-        entry["shift_E"],
-        "--shift-O",
-        entry["shift_O"],
+        str(entry["n_traj"]),
+        "--x0",
+        *x0,
         "--elev",
-        entry["elev"],
+        str(entry["elev"]),
         "--azim",
-        entry["azim"],
+        str(entry["azim"]),
         "--c-stat",
         args.c_stat,
     ]
