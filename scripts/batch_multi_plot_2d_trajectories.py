@@ -1,3 +1,10 @@
+"""
+Generate static 2D trajectory plots for multiple scenarios.
+FIXME: do it for any 2 variables + bounds
+
+Usage example:
+    python scripts/batch_multi_plot_2d_trajectories.py --out-dir figures/phase2d_batch
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
