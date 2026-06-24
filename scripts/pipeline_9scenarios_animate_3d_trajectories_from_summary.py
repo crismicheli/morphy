@@ -1,3 +1,18 @@
+"""
+Rebuild and run 3D trajectory animations for the 27 cases listed in a saved summary file.
+
+The summary file is expected to be produced by
+`batch_9scenarios_compare_3d_phenotype_labels_with_summary.py`. It contains the
+27 cases obtained from 9 scenarios evaluated at three automatically selected
+initial-point regimes per scenario. This pipeline reads the saved scenario filters,
+initial points, and visualization parameters from that text file, then launches the
+corresponding 3D trajectory animations and writes an output log of the executed calls.
+
+Usage example:
+    python scripts/pipeline_9scenarios_animate_3d_trajectories_from_summary.py \
+        --summary figures/all_9_compare_3d/sweep_summary_calls.txt \
+        --out-dir figures/all_9_animations
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
