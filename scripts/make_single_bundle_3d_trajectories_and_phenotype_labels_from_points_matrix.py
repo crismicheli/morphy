@@ -246,7 +246,7 @@ def build_point_legend_handles(x0_matrix: np.ndarray) -> list[Line2D]:
                 [0],
                 color=color_for_index(i),
                 lw=2,
-                label=f"x0[{i}] = {np.array2string(row, precision=2, separator=', ')}",
+                label=f"x0[{i}] (C,T,E,O) = {np.array2string(row, precision=2, separator=', ')}",
             )
         )
     handles.append(
