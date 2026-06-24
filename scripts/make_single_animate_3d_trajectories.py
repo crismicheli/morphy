@@ -1,3 +1,10 @@
+"""
+Render a 3D trajectory animation for one scenario.
+FIXME: option to choose any 3 variables and bounds
+
+Usage example:
+    python scripts/make_single_animate_3d_trajectories.py --filter "Near-critical asymmetric regime" --n-traj 32 --x0 0.50 1.25 0.92 0.28 --show-box
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 
