@@ -51,38 +51,39 @@ def classify_eto_regime(T: float, E: float, O: float) -> str:
     return "near" if near else "inside"
 
 
-def find_shift_from_base(base_x0_center, regime: str) -> tuple[float, float, float, tuple[float, float, float]]:
-    _, base_T, base_E, base_O = [float(v) for v in base_x0_center]
+def find_point_from_base(
+    base_x0_center,
+    regime: str,
+) -> tuple[float, float, float, float]:
+    base_C, _, _, _ = [float(v) for v in base_x0_center]
 
     candidates = {
         "inside": [
-            (0.45 - base_T, 0.35 - base_E, 0.65 - base_O),
-            (0.70 - base_T, 0.60 - base_E, 0.55 - base_O),
+            (base_C, 0.45, 0.35, 0.65),
+            (base_C, 0.70, 0.60, 0.55),
         ],
         "near": [
-            (1.40 - base_T, 1.65 - base_E, 0.24 - base_O),
-            (1.46 - base_T, 1.74 - base_E, 0.22 - base_O),
+            (base_C, 1.40, 1.65, 0.24),
+            (base_C, 1.46, 1.74, 0.22),
         ],
         "outside": [
-            (1.56 - base_T, 1.86 - base_E, 0.18 - base_O),
-            (1.62 - base_T, 1.92 - base_E, 0.16 - base_O),
-            (1.52 - base_T, 1.84 - base_E, 0.19 - base_O),
+            (base_C, 1.56, 1.86, 0.18),
+            (base_C, 1.62, 1.92, 0.16),
+            (base_C, 1.52, 1.84, 0.19),
         ],
     }
 
-    for shift_T, shift_E, shift_O in candidates[regime]:
-        T = base_T + shift_T
-        E = base_E + shift_E
-        O = base_O + shift_O
+    for x0_center in candidates[regime]:
+        _, T, E, O = x0_center
         if classify_eto_regime(T, E, O) == regime:
-            return shift_T, shift_E, shift_O, (T, E, O)
+            return x0_center
 
-    raise RuntimeError(f"Could not build a valid {regime} shift from base x0_center={base_x0_center}")
+    raise RuntimeError(f"Could not build a valid {regime} x0_center from base x0_center={base_x0_center}")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep 9 scenarios using exported base x0_center values and additive ETO shifts, then save a summary of all calls."
+        description="Sweep 9 scenarios using exported base x0_center values and explicit 4D initial points, then save a summary of all calls."
     )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUTDIR), help="Directory for saved figures and summary file.")
     parser.add_argument("--n-traj", type=int, default=40, help="Number of trajectories per run.")
@@ -95,7 +96,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_command(args: argparse.Namespace, scenario_filter: str, prefix: str, shift_T: float, shift_E: float, shift_O: float) -> list[str]:
+def build_command(
+    args: argparse.Namespace,
+    scenario_filter: str,
+    prefix: str,
+    x0_center: tuple[float, float, float, float],
+) -> list[str]:
+    C, T, E, O = x0_center
     cmd = [
         args.python,
         str(SINGLE_SCRIPT),
@@ -107,12 +114,11 @@ def build_command(args: argparse.Namespace, scenario_filter: str, prefix: str, s
         str(args.out_dir),
         "--n-traj",
         str(args.n_traj),
-        "--shift-T",
-        f"{shift_T:.10f}",
-        "--shift-E",
-        f"{shift_E:.10f}",
-        "--shift-O",
-        f"{shift_O:.10f}",
+        "--x0",
+        f"{C:.10f}",
+        f"{T:.10f}",
+        f"{E:.10f}",
+        f"{O:.10f}",
         "--stride",
         str(args.stride),
         "--elev",
@@ -142,21 +148,21 @@ def main() -> None:
     for scenario_filter, slug in TARGET_SCENARIOS:
         scenario = choose_scenario(scenario_filter)
         base_x0_center, _ = get_base_x0_center(scenario)
-        _, base_T, base_E, base_O = [float(v) for v in base_x0_center]
+        base_C, base_T, base_E, base_O = [float(v) for v in base_x0_center]
 
         for regime in REGIME_ORDER:
-            shift_T, shift_E, shift_O, (final_T, final_E, final_O) = find_shift_from_base(base_x0_center, regime)
+            x0_center = find_point_from_base(base_x0_center, regime)
+            C, T, E, O = x0_center
             prefix = f"{slug}__{regime}"
-            cmd = build_command(args, scenario_filter, prefix, shift_T, shift_E, shift_O)
+            cmd = build_command(args, scenario_filter, prefix, x0_center)
             planned_cmds.append(cmd)
             total += 1
 
             header = (
                 f"[{total:02d}/27] {scenario['label']} | requested_start_regime={regime} | "
-                f"base_ETO=(T={base_T:.4f}, E={base_E:.4f}, O={base_O:.4f}) | "
-                f"shift=(dT={shift_T:.4f}, dE={shift_E:.4f}, dO={shift_O:.4f}) | "
-                f"final_ETO=(T={final_T:.4f}, E={final_E:.4f}, O={final_O:.4f}) | "
-                f"classified_start={classify_eto_regime(final_T, final_E, final_O)}"
+                f"base_x0=(C={base_C:.4f}, T={base_T:.4f}, E={base_E:.4f}, O={base_O:.4f}) | "
+                f"x0=(C={C:.4f}, T={T:.4f}, E={E:.4f}, O={O:.4f}) | "
+                f"classified_start={classify_eto_regime(T, E, O)}"
             )
             cmd_str = " ".join(cmd)
             saved_line = f"Expected output: {expected_output(prefix, args.out_dir)}"
