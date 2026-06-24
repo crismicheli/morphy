@@ -1,3 +1,9 @@
+"""
+Generate 3D quiver-field plots for 9 scenarios.
+
+Usage example:
+    python scripts/batch_9scenarios_plot_3d_quiver.py --out-dir figures/all_9_quiver
+"""
 #!/usr/bin/env python3
 from __future__ import annotations
 """
