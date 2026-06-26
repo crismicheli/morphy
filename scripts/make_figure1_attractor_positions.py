@@ -166,20 +166,7 @@ def main(output: str | None = None, show_box: bool = True) -> None:
 
         style_axis(ax, f"{title}: {scenario['label']}", show_box=show_box)
 
-        ax.text2D(
-            0.02, 0.02,
-            "Same 5 sparse initial points across panels\nSparse sampling emphasizes reachability, not basin volume",
-            transform=ax.transAxes,
-            fontsize=8,
-        )
-
     build_legends(axes[0])
-
-    fig.suptitle(
-        "Figure 1. Scenario-dependent attractor and endpoint positions from shared sparse initial conditions",
-        fontsize=15,
-        y=1.02,
-    )
 
     out = Path(output) if output else (REPO_ROOT / "figures" / "figure1_attractor_positions.png")
     out.parent.mkdir(parents=True, exist_ok=True)
