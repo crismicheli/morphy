@@ -143,12 +143,8 @@ def run_panel(scenario_filter: str):
 def build_legends(ax):
     handles = [
         Line2D([0], [0], color=BLUE_TRAJ, lw=2, label="Viable trajectory family"),
-        Line2D([0], [0], color=LIGHT_BLUE, lw=2, label="Reachable trajectory (inside so far)"),
         Line2D([0], [0], color=OUTSIDE_RED, lw=2, label="Trajectory leaving viability box"),
         Line2D([0], [0], marker="*", linestyle="", color=ATTRACTOR_BLACK, markersize=10, label="Viable endpoint"),
-        Line2D([0], [0], marker="X", linestyle="", color=OUTSIDE_RED, markersize=9, label="Non-viable endpoint"),
-        Line2D([0], [0], marker="D", linestyle="", color=ATTRACTOR_BLACK, markersize=8, label="Mean endpoint / attractor location"),
-        Line2D([0], [0], marker="o", linestyle="", color=LIGHT_BLUE, markersize=6, label=f"Start cloud near box, x0 center (C,T,E,O) = {np.array2string(X0_CENTER, precision=2, separator=', ')}"),
     ]
     ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.0, 1.02), frameon=False, fontsize=8)
 
