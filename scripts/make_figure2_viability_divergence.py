@@ -39,8 +39,8 @@ from plotting.plot_helpers import add_viability_box, build_line_segments_3d, get
 from plotting.scenario_helpers import choose_scenario, run_single_scenario
 
 
-STABLE_FILTER = "Stiff scaffold"
-UNSTABLE_FILTER = "Over-tensioned"
+STABLE_FILTER = "Enhanced guidance"
+UNSTABLE_FILTER = "Low porosity"
 
 N_TRAJ = 30
 
