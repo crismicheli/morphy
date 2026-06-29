@@ -185,23 +185,26 @@ def main() -> None:
 
         output_path = output_dir / f"{slug}_eto_quiver_density_{density}.png"
 
-        save_quiver_field_plot(
-            scenario,
-            origins,
-            vectors,
-            output_path,
-            bounds=DEFAULT_BOUNDS,
-            c_slice=args.c_slice,
-            elev=args.elev,
-            azim=args.azim,
-            show_box=args.show_box,
-            quiver_mode=args.quiver_mode,
-            quiver_length=args.quiver_length,
-            bins=args.bins,
-            binned_norm=True,
-            dpi=220,
-            cmap_name="viridis",
-        )
+        def save_quiver_field_plot(
+            scenario_cfg: Dict,
+            origins: np.ndarray,
+            vectors: np.ndarray,
+            output_path: Path,
+            *,
+            bounds: Dict,
+            c_slice: float,
+            elev: float = 24.0,
+            azim: float = -58.0,
+            show_box: bool = False,
+            quiver_mode: str = "normalized",
+            quiver_length: float = 0.10,
+            quiver_alpha: float = 0.45,
+            quiver_linewidth: float = 0.7,
+            bins: int = 8,
+            binned_norm: bool = False,
+            dpi: int = 220,
+            arrow_color: str = "#2166ac",
+        ) -> None:
 
         print(f"Saved density={density}: {output_path}")
 
