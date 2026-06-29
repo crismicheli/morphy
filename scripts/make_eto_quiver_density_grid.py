@@ -1,27 +1,80 @@
 #!/usr/bin/env python3
 """
-Generate 3D ETO quiver plots for one scenario at different arrow densities.
+Generate 3D ETO quiver-field plots for one selected morphodynamic scenario,
+sweeping over multiple arrow densities while keeping the same underlying
+dynamical system, camera view, and fixed curvature slice.
 
-This script renders only the 3D ETO quiver field view (axes T, E, O) at a fixed
-curvature slice C = c_slice. It does not render trajectories, taxonomy labels,
-or animations.
+This script is intentionally focused on the ETO projection only:
 
-Arrow density is controlled by the number of grid points used to sample the
-field. Arrows use a single fixed color, so vector magnitude is conveyed only by
-arrow length, not by a colormap.
+- State order in the full model is always (C, T, E, O).
+- The rendered 3D plot uses axes (T, E, O).
+- The field is sampled at a fixed curvature slice C = --c-slice.
+- Arrows are drawn in a single fixed color, so local speed is encoded only
+  through vector length unless --normalize is requested.
+- A black star marks an estimated attractor in ETO space.
 
-State order in the model is always (C, T, E, O). The quiver plot shows the
-projected field (dT, dE, dO) at fixed C.
+Compared with the general-purpose 3D quiver utilities in the repository, this
+script is specialized for one task: produce several static ETO quiver plots for
+the same scenario at different grid densities, saving them into a concise,
+scenario-specific output folder.
 
-Examples
---------
-python scripts/make_eto_quiver_density_grid.py --filter "High porosity" --densities 5 8 12 --show-box
-python scripts/make_eto_quiver_density_grid.py --filter "Intermediate porosity" --densities 6 10 14
+Typical usage
+-------------
+1) High-porosity scenario, three densities, viability box, attractor marker:
+   python scripts/make_eto_quiver_density_grid.py \
+       --filter "High porosity" \
+       --densities 5 8 12 \
+       --show-box \
+       --show-attractor
+
+2) Intermediate porosity with slightly longer arrows:
+   python scripts/make_eto_quiver_density_grid.py \
+       --filter "Intermediate porosity" \
+       --densities 6 10 14 \
+       --quiver-length 0.14 \
+       --show-attractor
+
+3) Enhanced-guidance scenario, normalized direction field only:
+   python scripts/make_eto_quiver_density_grid.py \
+       --filter "Enhanced guidance" \
+       --densities 7 11 \
+       --normalize \
+       --show-box
+
+4) Write results into a custom base directory:
+   python scripts/make_eto_quiver_density_grid.py \
+       --filter "Hypoxic environment" \
+       --densities 5 9 13 \
+       --output-dir figures/custom_quiver_runs \
+       --show-attractor
+
+What gets saved
+---------------
+For a scenario such as "High porosity", outputs are written to a compact,
+scenario-specific folder, for example:
+
+    figures/high_porosity_eto_quiver/
+
+and files inside that folder are named like:
+
+    high_porosity_eto_quiver_density_5.png
+    high_porosity_eto_quiver_density_8.png
+    high_porosity_eto_quiver_density_12.png
+
+Notes
+-----
+- The ODE right-hand side is evaluated from viabilitykernels.odes.rhs.
+- Scenario-specific parameter overrides are merged onto DEFAULT_PARAMS.
+- The attractor marker is estimated by integrating from the repository's
+  DEFAULT_SIM["x0_center"] and plotting the terminal (T, E, O) point.
+- This script does not use a speed colormap, by design.
 """
 from __future__ import annotations
 
 import argparse
+import re
 import sys
+import unicodedata
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,7 +87,7 @@ if str(ROOT) not in sys.path:
 
 from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot_helpers import add_viability_box, get_axes_limits
-from plotting.scenario_helpers import choose_scenario, scenario_slug
+from plotting.scenario_helpers import choose_scenario
 from viabilitykernels.odes import rhs
 
 
@@ -50,7 +103,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Base directory for output PNG files. Scenario subfolder is created inside it.",
+        help=(
+            "Base directory for output PNG files. If omitted, outputs are written "
+            "under ROOT/figures/<minimal-scenario-name>_eto_quiver/."
+        ),
     )
     parser.add_argument(
         "--densities",
@@ -144,6 +200,33 @@ def normalize_vectors(vectors: np.ndarray) -> np.ndarray:
     return vectors / norms
 
 
+def minimal_scenario_name(label: str) -> str:
+    """
+    Convert a verbose scenario label into a compact, filesystem-friendly stem.
+
+    Examples
+    --------
+    "High porosity  (p=0.75) — borderline" -> "high_porosity"
+    "Hypoxic environment  (ρ=0.3, s=0.4) — unstable" -> "hypoxic_environment"
+    "Enhanced guidance  (a=6.0) — stable" -> "enhanced_guidance"
+    "Near-critical asymmetric regime (β=2.6, η=0.7, δ_E=0.9, a=6.2, ρ=0.85, s=0.9) — borderline"
+        -> "near_critical_asymmetric_regime"
+    """
+    head = label.split("(")[0]
+    head = head.split("—")[0]
+    head = head.strip().lower()
+
+    head = unicodedata.normalize("NFKD", head)
+    head = head.encode("ascii", "ignore").decode("ascii")
+
+    head = head.replace("-", "_")
+    head = re.sub(r"[^a-z0-9_ ]+", "", head)
+    head = re.sub(r"\s+", "_", head)
+    head = re.sub(r"_+", "_", head).strip("_")
+
+    return head or "scenario"
+
+
 def build_eto_field_samples(
     scenario_cfg: dict,
     *,
@@ -152,6 +235,29 @@ def build_eto_field_samples(
     bounds: dict,
     par: dict,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Sample the vector field on a regular grid in (T, E, O) at fixed C.
+
+    Parameters
+    ----------
+    scenario_cfg : dict
+        Scenario dictionary selected from the configured scenario catalogue.
+    c_slice : float
+        Fixed curvature value used to define the ETO slice.
+    density : int
+        Number of sample points per axis for T, E, and O.
+    bounds : dict
+        Default viability bounds used to derive axis extents.
+    par : dict
+        Baseline parameter dictionary, before applying scenario overrides.
+
+    Returns
+    -------
+    origins : ndarray, shape (n, 3)
+        Sampled points in ETO coordinates (T, E, O).
+    vectors : ndarray, shape (n, 3)
+        Corresponding projected derivatives (dT, dE, dO).
+    """
     scenario_params = dict(par)
     scenario_params.update(scenario_cfg.get("param_overrides", {}))
     p = float(scenario_cfg["p"])
@@ -188,6 +294,13 @@ def estimate_attractor_eto(
     t_final: float,
     n_eval: int,
 ) -> np.ndarray:
+    """
+    Estimate an attractor-like terminal point in ETO space by integrating the
+    selected scenario from the repository's default initial center.
+
+    The full model state is (C, T, E, O), but the returned point is the
+    projected terminal coordinate (T, E, O).
+    """
     scenario_params = dict(par)
     scenario_params.update(scenario_cfg.get("param_overrides", {}))
     p = float(scenario_cfg["p"])
@@ -229,6 +342,12 @@ def save_eto_quiver_plot(
     attractor_eto: np.ndarray | None = None,
     dpi: int = 220,
 ) -> None:
+    """
+    Save one static 3D ETO quiver plot for a given scenario and density.
+
+    If normalize=False, vector length conveys local speed.
+    If normalize=True, all arrows are scaled uniformly and show direction only.
+    """
     plot_origins = origins
     plot_vectors = normalize_vectors(vectors) if normalize else vectors
 
@@ -303,16 +422,16 @@ def save_eto_quiver_plot(
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
-    slug = scenario_slug(scenario["label"])
+    scenario_name = minimal_scenario_name(scenario["label"])
 
     if args.output_dir:
         base_output_dir = Path(args.output_dir)
         if not base_output_dir.is_absolute():
             base_output_dir = ROOT / base_output_dir
+        scenario_output_dir = base_output_dir / f"{scenario_name}_eto_quiver"
     else:
-        base_output_dir = ROOT / "figures" / "quiver_density"
+        scenario_output_dir = ROOT / "figures" / f"{scenario_name}_eto_quiver"
 
-    scenario_output_dir = base_output_dir / slug
     scenario_output_dir.mkdir(parents=True, exist_ok=True)
 
     attractor_eto = None
@@ -333,7 +452,7 @@ def main() -> None:
             par=DEFAULT_PARAMS,
         )
 
-        output_path = scenario_output_dir / f"{slug}_eto_quiver_density_{density}.png"
+        output_path = scenario_output_dir / f"{scenario_name}_eto_quiver_density_{density}.png"
 
         save_eto_quiver_plot(
             scenario,
