@@ -26,12 +26,13 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.integrate import solve_ivp
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import DEFAULT_BOUNDS, DEFAULT_PARAMS
+from config import DEFAULT_BOUNDS, DEFAULT_PARAMS, DEFAULT_SIM
 from plotting.plot_helpers import add_viability_box, get_axes_limits
 from plotting.scenario_helpers import choose_scenario, scenario_slug
 from viabilitykernels.odes import rhs
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Directory for output PNG files. If omitted, files are written to ROOT/figures/quiver_density.",
+        help="Base directory for output PNG files. Scenario subfolder is created inside it.",
     )
     parser.add_argument(
         "--densities",
@@ -98,6 +99,11 @@ def parse_args() -> argparse.Namespace:
         help="Show the viability box in the 3D ETO plot.",
     )
     parser.add_argument(
+        "--show-attractor",
+        action="store_true",
+        help="Overlay the attractor as a black star.",
+    )
+    parser.add_argument(
         "--elev",
         type=float,
         default=24.0,
@@ -114,6 +120,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=220,
         help="Output PNG resolution.",
+    )
+    parser.add_argument(
+        "--attractor-time",
+        type=float,
+        default=float(DEFAULT_SIM["t_span"][1]),
+        help="Integration horizon used to estimate the attractor point.",
+    )
+    parser.add_argument(
+        "--attractor-n-eval",
+        type=int,
+        default=int(DEFAULT_SIM["n_eval"]),
+        help="Number of time samples used when integrating toward the attractor.",
     )
     return parser.parse_args()
 
@@ -134,16 +152,6 @@ def build_eto_field_samples(
     bounds: dict,
     par: dict,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Sample the vector field on a regular grid in (T, E, O) at fixed C.
-
-    Returns
-    -------
-    origins : ndarray, shape (n, 3)
-        Sampled points in (T, E, O).
-    vectors : ndarray, shape (n, 3)
-        Corresponding derivatives (dT, dE, dO).
-    """
     scenario_params = dict(par)
     scenario_params.update(scenario_cfg.get("param_overrides", {}))
     p = float(scenario_cfg["p"])
@@ -173,6 +181,35 @@ def build_eto_field_samples(
     return origins_arr[keep], vectors_arr[keep]
 
 
+def estimate_attractor_eto(
+    scenario_cfg: dict,
+    *,
+    par: dict,
+    t_final: float,
+    n_eval: int,
+) -> np.ndarray:
+    scenario_params = dict(par)
+    scenario_params.update(scenario_cfg.get("param_overrides", {}))
+    p = float(scenario_cfg["p"])
+
+    x0 = np.asarray(DEFAULT_SIM["x0_center"], dtype=float)
+    t_eval = np.linspace(0.0, t_final, n_eval)
+
+    sol = solve_ivp(
+        lambda t, x: rhs(t, x, p, scenario_params),
+        (0.0, t_final),
+        x0,
+        t_eval=t_eval,
+        rtol=float(DEFAULT_SIM["rtol"]),
+        atol=float(DEFAULT_SIM["atol"]),
+    )
+
+    if not sol.success:
+        raise RuntimeError(f"Attractor integration failed: {sol.message}")
+
+    return np.asarray(sol.y[1:4, -1], dtype=float)
+
+
 def save_eto_quiver_plot(
     scenario_cfg: dict,
     origins: np.ndarray,
@@ -189,6 +226,7 @@ def save_eto_quiver_plot(
     arrow_alpha: float = 0.55,
     arrow_linewidth: float = 0.7,
     normalize: bool = False,
+    attractor_eto: np.ndarray | None = None,
     dpi: int = 220,
 ) -> None:
     plot_origins = origins
@@ -201,6 +239,11 @@ def save_eto_quiver_plot(
     t_upper = max(tmax_axis, float(plot_origins[:, 0].max()) * 1.05 if len(plot_origins) else tmax_axis)
     e_upper = max(emax_axis, float(plot_origins[:, 1].max()) * 1.05 if len(plot_origins) else emax_axis)
     o_upper = max(omax_axis, float(plot_origins[:, 2].max()) * 1.05 if len(plot_origins) else omax_axis)
+
+    if attractor_eto is not None:
+        t_upper = max(t_upper, float(attractor_eto[0]) * 1.05)
+        e_upper = max(e_upper, float(attractor_eto[1]) * 1.05)
+        o_upper = max(o_upper, float(attractor_eto[2]) * 1.05)
 
     ax.set_xlim(0, t_upper)
     ax.set_ylim(0, e_upper)
@@ -230,6 +273,20 @@ def save_eto_quiver_plot(
             linewidths=arrow_linewidth,
         )
 
+    if attractor_eto is not None:
+        ax.scatter(
+            [attractor_eto[0]],
+            [attractor_eto[1]],
+            [attractor_eto[2]],
+            color="black",
+            marker="*",
+            s=220,
+            depthshade=False,
+            label="Attractor",
+            zorder=10,
+        )
+        ax.legend(loc="upper right", frameon=True)
+
     density_tag = int(round(len(origins) ** (1.0 / 3.0))) if len(origins) else 0
     magnitude_mode = "normalized direction only" if normalize else "length encodes speed"
     ax.set_title(
@@ -246,17 +303,26 @@ def save_eto_quiver_plot(
 def main() -> None:
     args = parse_args()
     scenario = choose_scenario(args.filter)
+    slug = scenario_slug(scenario["label"])
 
     if args.output_dir:
-        output_dir = Path(args.output_dir)
-        if not output_dir.is_absolute():
-            output_dir = ROOT / output_dir
+        base_output_dir = Path(args.output_dir)
+        if not base_output_dir.is_absolute():
+            base_output_dir = ROOT / base_output_dir
     else:
-        output_dir = ROOT / "figures" / "quiver_density"
+        base_output_dir = ROOT / "figures" / "quiver_density"
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    scenario_output_dir = base_output_dir / slug
+    scenario_output_dir.mkdir(parents=True, exist_ok=True)
 
-    slug = scenario_slug(scenario["label"])
+    attractor_eto = None
+    if args.show_attractor:
+        attractor_eto = estimate_attractor_eto(
+            scenario,
+            par=DEFAULT_PARAMS,
+            t_final=args.attractor_time,
+            n_eval=args.attractor_n_eval,
+        )
 
     for density in args.densities:
         origins, vectors = build_eto_field_samples(
@@ -267,7 +333,7 @@ def main() -> None:
             par=DEFAULT_PARAMS,
         )
 
-        output_path = output_dir / f"{slug}_eto_quiver_density_{density}.png"
+        output_path = scenario_output_dir / f"{slug}_eto_quiver_density_{density}.png"
 
         save_eto_quiver_plot(
             scenario,
@@ -284,6 +350,7 @@ def main() -> None:
             arrow_alpha=args.arrow_alpha,
             arrow_linewidth=args.arrow_linewidth,
             normalize=args.normalize,
+            attractor_eto=attractor_eto,
             dpi=args.dpi,
         )
 
