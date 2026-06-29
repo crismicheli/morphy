@@ -24,6 +24,7 @@ Each exported point record contains:
 - phenotypical label: classifier output for that point
 - 4D Euclidean distance from the attractor
 - timestamp within its parent trajectory
+- time delta to the previous sampled point within its parent trajectory
 
 Model conventions
 -----------------
@@ -106,23 +107,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Export point-only trajectory records for one scenario."
     )
-    parser.add_argument(
-        "--filter",
-        default="Intermediate porosity",
-        help="Substring used to choose a scenario label.",
-    )
+    parser.add_argument("--filter", default="Intermediate porosity", help="Substring used to choose a scenario label.")
     parser.add_argument(
         "--classifier-type",
         choices=["static", "temporal", "state_machine"],
         default="static",
         help="Classifier used to label every trajectory point.",
     )
-    parser.add_argument(
-        "--n-traj",
-        type=int,
-        default=200,
-        help="Requested number of sampled trajectories before deduplication.",
-    )
+    parser.add_argument("--n-traj", type=int, default=200, help="Requested number of sampled trajectories before deduplication.")
     parser.add_argument(
         "--x0-center",
         type=float,
@@ -139,67 +131,29 @@ def parse_args() -> argparse.Namespace:
         metavar=("C_SIG", "T_SIG", "E_SIG", "O_SIG"),
         help="Optional noise scale for initial-condition sampling in (C, T, E, O) order.",
     )
-    parser.add_argument(
-        "--rng-seed",
-        type=int,
-        default=int(DEFAULT_SIM["rng_seed"]),
-        help="Random seed used for initial-condition sampling.",
-    )
-    parser.add_argument(
-        "--dedup-decimals",
-        type=int,
-        default=8,
-        help="Decimal precision used when deduplicating initial conditions.",
-    )
-    parser.add_argument(
-        "--t-final",
-        type=float,
-        default=float(DEFAULT_SIM["t_span"][1]),
-        help="Final integration time.",
-    )
-    parser.add_argument(
-        "--n-eval",
-        type=int,
-        default=int(DEFAULT_SIM["n_eval"]),
-        help="Number of sampled time points per trajectory.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="output",
-        help="Directory where the point-record CSV is written.",
-    )
+    parser.add_argument("--rng-seed", type=int, default=int(DEFAULT_SIM["rng_seed"]), help="Random seed used for initial-condition sampling.")
+    parser.add_argument("--dedup-decimals", type=int, default=8, help="Decimal precision used when deduplicating initial conditions.")
+    parser.add_argument("--t-final", type=float, default=float(DEFAULT_SIM["t_span"][1]), help="Final integration time.")
+    parser.add_argument("--n-eval", type=int, default=int(DEFAULT_SIM["n_eval"]), help="Number of sampled time points per trajectory.")
+    parser.add_argument("--time-unit", default="a.u.", help="Model time unit label stored in the CSV, e.g. h, d, weeks, or a.u.")
+    parser.add_argument("--output-dir", default="output", help="Directory where the point-record CSV is written.")
     return parser.parse_args()
 
 
 def minimal_scenario_name(label: str) -> str:
-    """
-    Convert a verbose scenario label into a compact, filesystem-friendly stem.
-
-    Examples
-    --------
-    "High porosity  (p=0.75) — borderline" -> "high_porosity"
-    "Hypoxic environment  (ρ=0.3, s=0.4) — unstable" -> "hypoxic_environment"
-    "Enhanced guidance  (a=6.0) — stable" -> "enhanced_guidance"
-    """
     head = label.split("(")[0]
     head = head.split("—")[0]
     head = head.strip().lower()
-
     head = unicodedata.normalize("NFKD", head)
     head = head.encode("ascii", "ignore").decode("ascii")
-
     head = head.replace("-", "_")
     head = re.sub(r"[^a-z0-9_ ]+", "", head)
     head = re.sub(r"\s+", "_", head)
     head = re.sub(r"_+", "_", head).strip("_")
-
     return head or "scenario"
 
 
 def inside_viability(C: float, T: float, E: float, O: float, bounds: dict) -> bool:
-    """
-    Pointwise viability check in full 4D state space.
-    """
     return (
         C >= float(bounds["C_min"])
         and float(bounds["T_min"]) <= T <= float(bounds["T_max"])
@@ -208,20 +162,9 @@ def inside_viability(C: float, T: float, E: float, O: float, bounds: dict) -> bo
     )
 
 
-def deduplicate_initial_conditions(
-    initial_conditions,
-    *,
-    decimals: int,
-) -> list[np.ndarray]:
-    """
-    Deduplicate initial conditions by rounding and hashing the 4D seed vector.
-
-    Deduplication is done before integration so that repeated or near-identical
-    seeds do not produce redundant trajectories.
-    """
+def deduplicate_initial_conditions(initial_conditions, *, decimals: int) -> list[np.ndarray]:
     seen = set()
     unique = []
-
     for x0 in initial_conditions:
         arr = np.asarray(x0, dtype=float)
         key = tuple(np.round(arr, decimals=decimals).tolist())
@@ -229,31 +172,16 @@ def deduplicate_initial_conditions(
             continue
         seen.add(key)
         unique.append(arr)
-
     return unique
 
 
 def effective_parameters_for_scenario(scenario_cfg: dict, par: dict) -> dict:
-    """
-    Merge scenario-specific parameter overrides onto the default parameter set.
-    """
     effective = dict(par)
     effective.update(scenario_cfg.get("param_overrides", {}))
     return effective
 
 
-def estimate_attractor_4d(
-    scenario_cfg: dict,
-    *,
-    par: dict,
-    x0_center: np.ndarray,
-    t_final: float,
-    n_eval: int,
-) -> np.ndarray:
-    """
-    Estimate a reference attractor by integrating from the chosen center point
-    and returning the terminal 4D state.
-    """
+def estimate_attractor_4d(scenario_cfg: dict, *, par: dict, x0_center: np.ndarray, t_final: float, n_eval: int) -> np.ndarray:
     effective_par = effective_parameters_for_scenario(scenario_cfg, par)
     sol = integrate_trajectory(
         x0=np.asarray(x0_center, dtype=float),
@@ -268,31 +196,11 @@ def estimate_attractor_4d(
 
 
 def compute_derivatives(sol) -> np.ndarray:
-    """
-    Approximate pointwise derivatives from a sampled solution array.
-    """
-    dt = max(1e-12, float(np.mean(np.diff(sol.t))))
-    return np.gradient(sol.y, dt, axis=1)
+    dt_mean = max(1e-12, float(np.mean(np.diff(sol.t)))) if len(sol.t) > 1 else 1.0
+    return np.gradient(sol.y, dt_mean, axis=1)
 
 
-def build_point_records(
-    *,
-    scenario_cfg: dict,
-    classifier_type: str,
-    classify_fn,
-    reset_fn,
-    effective_par: dict,
-    bounds: dict,
-    attractor_4d: np.ndarray,
-    trajectories: list,
-    initial_conditions: list[np.ndarray],
-) -> list[dict]:
-    """
-    Build the flat point-record table.
-
-    One row is emitted per sampled time point. Trajectory objects are not
-    exported; only pointwise data are written.
-    """
+def build_point_records(*, scenario_cfg: dict, classifier_type: str, classify_fn, reset_fn, effective_par: dict, bounds: dict, attractor_4d: np.ndarray, trajectories: list, initial_conditions: list[np.ndarray], time_unit: str) -> list[dict]:
     point_records: list[dict] = []
     scenario_name = minimal_scenario_name(scenario_cfg["label"])
 
@@ -301,22 +209,27 @@ def build_point_records(
             reset_fn()
 
         dydt = compute_derivatives(sol)
+        tvals = np.asarray(sol.t, dtype=float)
+        if len(tvals) == 0:
+            continue
+        deltas = np.empty_like(tvals)
+        deltas[0] = np.nan
+        if len(tvals) > 1:
+            deltas[1:] = np.diff(tvals)
 
         for i in range(sol.y.shape[1]):
-            timestamp = float(sol.t[i])
+            timestamp = float(tvals[i])
+            time_delta = float(deltas[i]) if np.isfinite(deltas[i]) else np.nan
             C, T, E, O = (float(v) for v in sol.y[:, i])
             dC, dT, dE, dO = (float(v) for v in dydt[:, i])
-
             point_viable = inside_viability(C, T, E, O, bounds)
             viability_label = "viable" if point_viable else "non_viable"
-
             phenotypical_label = classify_fn(
                 C, T, E, O, dC, dT, dE, dO,
                 bounds=bounds,
                 par=effective_par,
                 scenario_cfg=scenario_cfg,
             )
-
             point_state_4d = np.array([C, T, E, O], dtype=float)
             distance_from_attractor_4d = float(np.linalg.norm(point_state_4d - attractor_4d))
 
@@ -326,9 +239,11 @@ def build_point_records(
                     "scenario_name": scenario_name,
                     "scenario_expected": scenario_cfg.get("expected", ""),
                     "classifier_type": classifier_type,
+                    "time_unit": time_unit,
                     "trajectory_id": traj_idx,
                     "point_index": i,
                     "timestamp": timestamp,
+                    "time_delta": time_delta,
                     "x0_C": float(x0[0]),
                     "x0_T": float(x0[1]),
                     "x0_E": float(x0[2]),
@@ -342,18 +257,13 @@ def build_point_records(
                     "distance_from_attractor_4d": distance_from_attractor_4d,
                 }
             )
-
     return point_records
 
 
 def write_csv(rows: list[dict], output_path: Path) -> None:
-    """
-    Write a list of dict rows to CSV.
-    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         raise ValueError(f"No rows to write for {output_path}")
-
     fieldnames = list(rows[0].keys())
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -366,16 +276,8 @@ def main() -> None:
     scenario_cfg = choose_scenario(args.filter)
     scenario_name = minimal_scenario_name(scenario_cfg["label"])
 
-    x0_center = (
-        np.asarray(args.x0_center, dtype=float)
-        if args.x0_center is not None
-        else np.asarray(DEFAULT_SIM["x0_center"], dtype=float)
-    )
-    noise_scale = (
-        tuple(float(v) for v in args.noise_scale)
-        if args.noise_scale is not None
-        else tuple(float(v) for v in DEFAULT_SIM["noise_scale"])
-    )
+    x0_center = np.asarray(args.x0_center, dtype=float) if args.x0_center is not None else np.asarray(DEFAULT_SIM["x0_center"], dtype=float)
+    noise_scale = tuple(float(v) for v in args.noise_scale) if args.noise_scale is not None else tuple(float(v) for v in DEFAULT_SIM["noise_scale"])
 
     sampled_ics = sample_initial_conditions(
         x0_center=x0_center,
@@ -383,14 +285,10 @@ def main() -> None:
         noise_scale=noise_scale,
         rng_seed=int(args.rng_seed),
     )
-    unique_ics = deduplicate_initial_conditions(
-        sampled_ics,
-        decimals=int(args.dedup_decimals),
-    )
+    unique_ics = deduplicate_initial_conditions(sampled_ics, decimals=int(args.dedup_decimals))
 
     effective_par = effective_parameters_for_scenario(scenario_cfg, DEFAULT_PARAMS)
     classify_fn, reset_fn, _ = get_classifier_components(args.classifier_type)
-
     attractor_4d = estimate_attractor_4d(
         scenario_cfg,
         par=DEFAULT_PARAMS,
@@ -422,15 +320,14 @@ def main() -> None:
         attractor_4d=attractor_4d,
         trajectories=trajectories,
         initial_conditions=unique_ics,
+        time_unit=args.time_unit,
     )
 
     output_dir = Path(args.output_dir)
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
-
     scenario_dir = output_dir / f"{scenario_name}_point_records"
     scenario_dir.mkdir(parents=True, exist_ok=True)
-
     point_csv = scenario_dir / f"{scenario_name}_point_records_{args.classifier_type}.csv"
     write_csv(point_records, point_csv)
 
