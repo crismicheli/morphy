@@ -4,19 +4,22 @@ Generate 3D ETO quiver-field plots for one selected morphodynamic scenario,
 sweeping over multiple arrow densities while keeping the same underlying
 dynamical system, camera view, and fixed curvature slice.
 
-This script is intentionally focused on the ETO projection only:
+This script is intentionally specialized for the ETO projection only:
 
-- State order in the full model is always (C, T, E, O).
+- Full model state order is always (C, T, E, O).
 - The rendered 3D plot uses axes (T, E, O).
 - The field is sampled at a fixed curvature slice C = --c-slice.
 - Arrows are drawn in a single fixed color, so local speed is encoded only
-  through vector length unless --normalize is requested.
-- A black star marks an estimated attractor in ETO space.
+  by vector length unless --normalize is requested.
+- A black star can mark an estimated attractor in ETO space.
+- A sparse set of seeded trajectories can be overlaid independently of the
+  quiver density, so the figure remains readable for both sparse and dense
+  arrow fields.
 
-Compared with the general-purpose 3D quiver utilities in the repository, this
-script is specialized for one task: produce several static ETO quiver plots for
-the same scenario at different grid densities, saving them into a concise,
-scenario-specific output folder.
+Compared with the more general quiver utilities in the repository, this script
+is aimed at one practical task: generate a small family of static ETO quiver
+plots for the same scenario at different sampling densities, optionally with
+clean trajectory overlays.
 
 Typical usage
 -------------
@@ -27,21 +30,29 @@ Typical usage
        --show-box \
        --show-attractor
 
-2) Intermediate porosity with slightly longer arrows:
+2) Same scenario, but also overlay sparse seeded trajectories:
+   python scripts/make_eto_quiver_density_grid.py \
+       --filter "High porosity" \
+       --densities 5 8 12 \
+       --show-box \
+       --show-attractor \
+       --show-trajectories
+
+3) Intermediate porosity with slightly longer arrows:
    python scripts/make_eto_quiver_density_grid.py \
        --filter "Intermediate porosity" \
        --densities 6 10 14 \
        --quiver-length 0.14 \
        --show-attractor
 
-3) Enhanced-guidance scenario, normalized direction field only:
+4) Enhanced-guidance scenario, normalized direction field only:
    python scripts/make_eto_quiver_density_grid.py \
        --filter "Enhanced guidance" \
        --densities 7 11 \
        --normalize \
        --show-box
 
-4) Write results into a custom base directory:
+5) Hypoxic environment written into a custom output root:
    python scripts/make_eto_quiver_density_grid.py \
        --filter "Hypoxic environment" \
        --densities 5 9 13 \
@@ -50,12 +61,15 @@ Typical usage
 
 What gets saved
 ---------------
-For a scenario such as "High porosity", outputs are written to a compact,
-scenario-specific folder, for example:
+Outputs are written into a compact scenario-specific folder such as:
 
     figures/high_porosity_eto_quiver/
 
-and files inside that folder are named like:
+or, if --output-dir is provided:
+
+    <output-dir>/high_porosity_eto_quiver/
+
+The saved files follow the pattern:
 
     high_porosity_eto_quiver_density_5.png
     high_porosity_eto_quiver_density_8.png
@@ -63,11 +77,13 @@ and files inside that folder are named like:
 
 Notes
 -----
-- The ODE right-hand side is evaluated from viabilitykernels.odes.rhs.
+- The ODE field is evaluated through viabilitykernels.odes.rhs.
 - Scenario-specific parameter overrides are merged onto DEFAULT_PARAMS.
-- The attractor marker is estimated by integrating from the repository's
-  DEFAULT_SIM["x0_center"] and plotting the terminal (T, E, O) point.
-- This script does not use a speed colormap, by design.
+- The attractor marker is estimated by integrating from
+  DEFAULT_SIM["x0_center"] and projecting the terminal point to (T, E, O).
+- The seeded trajectories are deliberately sparse and are not tied to the
+  quiver density, so they keep a consistent visual weight across all outputs.
+- This script does not use a speed colormap by design.
 """
 from __future__ import annotations
 
@@ -158,6 +174,40 @@ def parse_args() -> argparse.Namespace:
         "--show-attractor",
         action="store_true",
         help="Overlay the attractor as a black star.",
+    )
+    parser.add_argument(
+        "--show-trajectories",
+        action="store_true",
+        help="Overlay a sparse set of seeded trajectories in ETO space.",
+    )
+    parser.add_argument(
+        "--traj-time",
+        type=float,
+        default=20.0,
+        help="Integration horizon for seeded trajectories.",
+    )
+    parser.add_argument(
+        "--traj-n-eval",
+        type=int,
+        default=300,
+        help="Number of time samples for each seeded trajectory.",
+    )
+    parser.add_argument(
+        "--traj-color",
+        default="black",
+        help="Seeded trajectory color.",
+    )
+    parser.add_argument(
+        "--traj-alpha",
+        type=float,
+        default=0.35,
+        help="Seeded trajectory transparency.",
+    )
+    parser.add_argument(
+        "--traj-linewidth",
+        type=float,
+        default=1.0,
+        help="Seeded trajectory linewidth.",
     )
     parser.add_argument(
         "--elev",
@@ -287,6 +337,71 @@ def build_eto_field_samples(
     return origins_arr[keep], vectors_arr[keep]
 
 
+def build_sparse_trajectory_seeds(
+    *,
+    c_slice: float,
+    bounds: dict,
+) -> np.ndarray:
+    """
+    Build a small, density-independent seed set in full state space (C, T, E, O).
+
+    The seed cloud is intentionally sparse so that trajectory overlays remain
+    readable regardless of the quiver density.
+    """
+    tmax_axis, emax_axis, omax_axis = get_axes_limits(bounds)
+
+    T_vals = np.array([0.20, 0.55, 0.90]) * tmax_axis
+    E_vals = np.array([0.20, 0.55, 0.90]) * emax_axis
+    O_vals = np.array([0.20, 0.75]) * omax_axis
+
+    seeds = []
+    for T in T_vals:
+        for E in E_vals:
+            for O in O_vals:
+                seeds.append([c_slice, T, E, O])
+
+    return np.asarray(seeds, dtype=float)
+
+
+def integrate_seeded_trajectories(
+    scenario_cfg: dict,
+    *,
+    seeds_4d: np.ndarray,
+    par: dict,
+    t_final: float,
+    n_eval: int,
+) -> list[np.ndarray]:
+    """
+    Integrate full 4D trajectories from sparse seeds and return ETO projections.
+
+    Each returned curve has shape (3, n_eval_like), corresponding to (T, E, O).
+    """
+    scenario_params = dict(par)
+    scenario_params.update(scenario_cfg.get("param_overrides", {}))
+    p = float(scenario_cfg["p"])
+
+    t_eval = np.linspace(0.0, t_final, n_eval)
+    curves: list[np.ndarray] = []
+
+    for x0 in seeds_4d:
+        try:
+            sol = solve_ivp(
+                lambda t, x: rhs(t, x, p, scenario_params),
+                (0.0, t_final),
+                np.asarray(x0, dtype=float),
+                t_eval=t_eval,
+                rtol=float(DEFAULT_SIM["rtol"]),
+                atol=float(DEFAULT_SIM["atol"]),
+            )
+        except ValueError:
+            continue
+
+        if sol.success and sol.y.shape[0] == 4:
+            curves.append(np.asarray(sol.y[1:4, :], dtype=float))
+
+    return curves
+
+
 def estimate_attractor_eto(
     scenario_cfg: dict,
     *,
@@ -340,6 +455,10 @@ def save_eto_quiver_plot(
     arrow_linewidth: float = 0.7,
     normalize: bool = False,
     attractor_eto: np.ndarray | None = None,
+    trajectory_curves: list[np.ndarray] | None = None,
+    traj_color: str = "black",
+    traj_alpha: float = 0.35,
+    traj_linewidth: float = 1.0,
     dpi: int = 220,
 ) -> None:
     """
@@ -363,6 +482,13 @@ def save_eto_quiver_plot(
         t_upper = max(t_upper, float(attractor_eto[0]) * 1.05)
         e_upper = max(e_upper, float(attractor_eto[1]) * 1.05)
         o_upper = max(o_upper, float(attractor_eto[2]) * 1.05)
+
+    if trajectory_curves:
+        for curve in trajectory_curves:
+            if curve.size:
+                t_upper = max(t_upper, float(np.max(curve[0, :])) * 1.05)
+                e_upper = max(e_upper, float(np.max(curve[1, :])) * 1.05)
+                o_upper = max(o_upper, float(np.max(curve[2, :])) * 1.05)
 
     ax.set_xlim(0, t_upper)
     ax.set_ylim(0, e_upper)
@@ -391,6 +517,18 @@ def save_eto_quiver_plot(
             alpha=arrow_alpha,
             linewidths=arrow_linewidth,
         )
+
+    if trajectory_curves:
+        for curve in trajectory_curves:
+            ax.plot(
+                curve[0, :],
+                curve[1, :],
+                curve[2, :],
+                color=traj_color,
+                alpha=traj_alpha,
+                linewidth=traj_linewidth,
+                zorder=6,
+            )
 
     if attractor_eto is not None:
         ax.scatter(
@@ -443,6 +581,20 @@ def main() -> None:
             n_eval=args.attractor_n_eval,
         )
 
+    trajectory_curves = None
+    if args.show_trajectories:
+        seeds_4d = build_sparse_trajectory_seeds(
+            c_slice=args.c_slice,
+            bounds=DEFAULT_BOUNDS,
+        )
+        trajectory_curves = integrate_seeded_trajectories(
+            scenario,
+            seeds_4d=seeds_4d,
+            par=DEFAULT_PARAMS,
+            t_final=args.traj_time,
+            n_eval=args.traj_n_eval,
+        )
+
     for density in args.densities:
         origins, vectors = build_eto_field_samples(
             scenario,
@@ -470,6 +622,10 @@ def main() -> None:
             arrow_linewidth=args.arrow_linewidth,
             normalize=args.normalize,
             attractor_eto=attractor_eto,
+            trajectory_curves=trajectory_curves,
+            traj_color=args.traj_color,
+            traj_alpha=args.traj_alpha,
+            traj_linewidth=args.traj_linewidth,
             dpi=args.dpi,
         )
 
