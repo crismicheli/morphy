@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Read a point-record CSV exported by export_trajectory_point_records.py and
@@ -61,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phenotype-distance-mode", choices=["count", "percent"], default="percent", help="Show phenotype-by-distance as raw counts or 100%% stacked percentages.")
     parser.add_argument("--cumulative-distance-bins", type=int, default=80, help="Number of equally spaced bins for the cumulative viable-distance curve.")
     parser.add_argument("--top-axis-ticks", type=int, default=6, help="Maximum number of labeled ticks on the top complementary x-axis.")
+    parser.add_argument("--print-attractor-summary", action="store_true", help="Print the estimated attractor position in CETO coordinates and its signed minimum distances to the viability-box faces.")
     parser.add_argument("--dpi", type=int, default=220, help="Output figure DPI.")
     return parser.parse_args()
 
@@ -76,6 +76,8 @@ def load_point_records(csv_path: Path) -> pd.DataFrame:
     df["distance_from_attractor_4d"] = pd.to_numeric(df["distance_from_attractor_4d"], errors="coerce")
     for col in ["C", "T", "E", "O"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["trajectory_id", "distance_from_attractor_4d", "phenotypical_label", "viability_label", "C", "T", "E", "O"])
     df["trajectory_id"] = df["trajectory_id"].astype(int)
     return df
@@ -143,6 +145,46 @@ def attach_signed_box_distance(df: pd.DataFrame, bounds: dict) -> pd.DataFrame:
     out = df.copy()
     out["signed_box_distance"] = out.apply(lambda row: signed_distance_to_viability_box(row, bounds), axis=1)
     return out
+
+
+def estimate_attractor_from_retained_points(df: pd.DataFrame) -> dict:
+    work = df.copy()
+    if "timestamp" in work.columns and work["timestamp"].notna().any():
+        work = work.dropna(subset=["timestamp"]).sort_values(["trajectory_id", "timestamp"])
+        tail = work.groupby("trajectory_id", as_index=False).tail(1)
+    else:
+        tail = work.groupby("trajectory_id", as_index=False).tail(1)
+
+    C = float(tail["C"].median())
+    T = float(tail["T"].median())
+    E = float(tail["E"].median())
+    O = float(tail["O"].median())
+
+    C_min = float(DEFAULT_BOUNDS["C_min"])
+    T_min = float(DEFAULT_BOUNDS["T_min"])
+    T_max = float(DEFAULT_BOUNDS["T_max"])
+    E_min = float(DEFAULT_BOUNDS["E_min"])
+    E_max = float(DEFAULT_BOUNDS["E_max"])
+    O_min = float(DEFAULT_BOUNDS["O_min"])
+
+    distances = {
+        "C_to_Cmin": C - C_min,
+        "T_to_Tmin": T - T_min,
+        "T_to_Tmax": T_max - T,
+        "E_to_Emin": E - E_min,
+        "E_to_Emax": E_max - E,
+        "O_to_Omin": O - O_min,
+    }
+
+    return {
+        "C": C,
+        "T": T,
+        "E": E,
+        "O": O,
+        "distances": distances,
+        "min_signed_distance": float(min(distances.values())),
+        "n_terminal_points": int(len(tail)),
+    }
 
 
 def summarize_sets(raw_df: pd.DataFrame, surviving_df: pd.DataFrame) -> dict:
@@ -363,7 +405,7 @@ def main() -> None:
         phenotype_png,
         phenotype_distance_bins=args.phenotype_distance_bins,
         phenotype_distance_mode=args.phenotype_distance_mode,
-        top_axis_ticks=args.top_axis_ticks,
+        top_axis_ticks=args.top_axis_tiacks if False else args.top_axis_ticks,
         summary=summary,
         title_stub=title_stub,
         dpi=args.dpi,
@@ -382,6 +424,15 @@ def main() -> None:
     print(f"Total points: {summary['total_points']}")
     print(f"Surviving points: {summary['surviving_points']}")
     print(f"Max surviving distance from attractor: {summary['max_distance_surviving']}")
+    if args.print_attractor_summary:
+        attractor = estimate_attractor_from_retained_points(surviving_df)
+        print("Estimated attractor CETO position (from median terminal surviving points):")
+        print(f"  C={attractor['C']:.6g}, T={attractor['T']:.6g}, E={attractor['E']:.6g}, O={attractor['O']:.6g}")
+        print("Signed distances to viability-box faces:")
+        for key, value in attractor['distances'].items():
+            print(f"  {key}={value:.6g}")
+        print(f"Minimum signed distance to viability box: {attractor['min_signed_distance']:.6g}")
+        print(f"Terminal points used for attractor estimate: {attractor['n_terminal_points']}")
     print(f"Phenotype-distance plot: {phenotype_png}")
     print(f"Cumulative viable-distance plot: {cumulative_png}")
 
