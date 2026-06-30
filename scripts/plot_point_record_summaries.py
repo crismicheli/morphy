@@ -1,10 +1,67 @@
+ percentage of either all viable points or all exported points, depending on the denominator option, and the legend reports the relevant totals.
+
+Example calls
+1) Default behavior: viable-point counts by distance
+bash
+python scripts/plot_point_record_summaries.py \
+  --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv
+This makes:
+
+smoothed phenotype-vs-time plot,
+
+viable-distance histogram with raw counts.
+
+2) Override time unit and smoothing
+bash
+python scripts/plot_point_record_summaries.py \
+  --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
+  --time-unit days \
+  --time-bins 80 \
+  --smooth-window 7
+This relabels the time axis and changes the time-resolution/smoothing of plot 1.
+
+3) Viable-distance as percent of viable points
+bash
+python scripts/plot_point_record_summaries.py \
+  --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
+  --distance-mode percent \
+  --distance-percent-denominator viable
+Here each bar is the percent of viable points falling in that distance bin, and the legend shows N for the viable subset.
+
+4) Viable-distance as percent of all exported points
+bash
+python scripts/plot_point_record_summaries.py \
+  --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
+  --distance-mode percent \
+  --distance-percent-denominator all
+Here each bar is the percent of all point records contributed by viable points in that distance bin, and the legend includes both N_all and N_viable.
+
+5) Custom output folder and binning
+bash
+python scripts/plot_point_record_summaries.py \
+  --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
+  --output-dir output/high_porosity_point_records/figures_custom \
+  --distance-bins 60 \
+  --distance-mode percent \
+  --distance-percent-denominator viable
+This writes the figures to a custom folder and uses finer distance binning.
+
+Output naming
+The distance figure filename now encodes the selected mode:
+
+count mode: ..._viable_distance_hist_count.png
+
+percent of viable: ..._viable_distance_hist_percent_viable.png
+
+percent of all: ..._viable_distance_hist_percent_all.png
+
 #!/usr/bin/env python3
 """
 Read a point-record CSV exported by export_trajectory_point_records.py and
 produce two summary plots:
 
 1) Time-resolved smoothed histograms of all phenotype labels.
-2) Number of viable points versus 4D distance from the attractor.
+2) Viable-point distance histograms in either raw counts or percentages.
 
 The input CSV is assumed to contain pointwise records only, with at least the
 following columns:
@@ -18,51 +75,33 @@ Optional columns such as scenario_label, scenario_name, classifier_type,
 trajectory_id, point_index, and state coordinates are ignored by the core
 aggregation logic but can be used in figure titles when present.
 
+The time unit is read from the CSV column `time_unit` when available and can be
+overridden from the command line.
+
 Typical usage
 -------------
-1) Basic run:
+1) Basic run (raw viable-point counts by distance):
    python scripts/plot_point_record_summaries.py \
        --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv
 
-2) Custom time binning and smoothing:
+2) Custom time unit override and smoothing:
    python scripts/plot_point_record_summaries.py \
        --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
+       --time-unit days \
        --time-bins 80 \
        --smooth-window 7
 
-3) Custom distance histogram resolution:
+3) Viable-point distance as percent of viable points:
    python scripts/plot_point_record_summaries.py \
        --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
-       --distance-bins 50
-       --time-unit ticks
+       --distance-mode percent \
+       --distance-percent-denominator viable
 
-4) Write outputs to a custom folder:
+4) Viable-point distance as percent of all exported points:
    python scripts/plot_point_record_summaries.py \
        --csv output/high_porosity_point_records/high_porosity_point_records_temporal.csv \
-       --output-dir output/high_porosity_point_records/figures
-
-Plot definitions
-----------------
-Phenotype time plot:
-    For each phenotype label, points are counted in equally spaced time bins.
-    The resulting count series is smoothed with a centered moving average.
-    This yields a time-resolved smoothed histogram per phenotype.
-
-Viability-distance plot:
-    Only points with viability_label == "viable" are retained. Their 4D
-    attractor distances are histogrammed into equally spaced distance bins,
-    and the bar height shows the number of viable points in each bin.
-
-Notes
------
-- The phenotype color palette follows the repository's STATE_COLORS map where
-  available, with a fallback color for unknown labels.
-- Smoothing is applied only along the time axis, not across phenotype labels.
-- The viability-distance plot intentionally uses raw counts rather than a
-  smoothed density so the number of viable points remains directly readable.
-
-The time unit is read from the CSV column `time_unit` when available and can be
-overridden from the command line.
+       --distance-mode percent \
+       --distance-percent-denominator all
 """
 from __future__ import annotations
 
@@ -71,6 +110,7 @@ from pathlib import Path
 import sys
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 import numpy as np
 import pandas as pd
 
@@ -81,6 +121,7 @@ if str(ROOT) not in sys.path:
 from classifiers.static_classifier import STATE_COLORS
 
 FALLBACK_COLOR = "#7f7f7f"
+DISTANCE_COLOR = "#2166ac"
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,6 +133,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-bins", type=int, default=60, help="Number of equally spaced time bins for the phenotype histogram plot.")
     parser.add_argument("--smooth-window", type=int, default=5, help="Centered moving-average window size used to smooth phenotype counts over time.")
     parser.add_argument("--distance-bins", type=int, default=40, help="Number of equally spaced bins for the viable-point distance histogram.")
+    parser.add_argument("--distance-mode", choices=["count", "percent"], default="count", help="Plot viable-point distance histogram as raw counts or percentages.")
+    parser.add_argument("--distance-percent-denominator", choices=["viable", "all"], default="viable", help="When --distance-mode percent is used, normalize by number of viable points or all points in the CSV.")
     parser.add_argument("--time-unit", default=None, help="Override the model time unit label. If omitted, the script uses the CSV time_unit column when present, otherwise 'a.u.'.")
     parser.add_argument("--dpi", type=int, default=220, help="Output figure DPI.")
     return parser.parse_args()
@@ -162,7 +205,7 @@ def plot_smoothed_phenotype_histograms(df: pd.DataFrame, output_path: Path, *, t
         color = STATE_COLORS.get(label, FALLBACK_COLOR)
         ax.plot(centers, smoothed, linewidth=2.2, color=color, label=label)
     title_stub = infer_title_stub(df, output_path)
-    ax.set_title(f"Time-resolved smoothed phenotype histograms\\n{title_stub}", fontsize=13, fontweight="bold")
+    ax.set_title(f"Time-resolved smoothed phenotype histograms\n{title_stub}", fontsize=13, fontweight="bold")
     ax.set_xlabel(f"Trajectory time [{time_unit}]")
     ax.set_ylabel("Smoothed point count")
     ax.grid(True, alpha=0.25)
@@ -172,7 +215,7 @@ def plot_smoothed_phenotype_histograms(df: pd.DataFrame, output_path: Path, *, t
     plt.close(fig)
 
 
-def plot_viable_distance_histogram(df: pd.DataFrame, output_path: Path, *, distance_bins: int, dpi: int) -> None:
+def compute_viable_distance_histogram(df: pd.DataFrame, *, distance_bins: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
     viable = df.loc[df["viability_label"].astype(str) == "viable"].copy()
     if viable.empty:
         raise ValueError("No viable points found in the CSV; cannot build viable-distance histogram.")
@@ -187,13 +230,62 @@ def plot_viable_distance_histogram(df: pd.DataFrame, output_path: Path, *, dista
     hist, _ = np.histogram(distances, bins=edges)
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
-    fig, ax = plt.subplots(figsize=(9.6, 6.0), constrained_layout=True)
-    ax.bar(centers, hist, width=widths, color="#2166ac", edgecolor="white", linewidth=0.8, alpha=0.9, align="center")
+    return centers, widths, hist.astype(float), len(viable), len(df)
+
+
+def plot_viable_distance_histogram(
+    df: pd.DataFrame,
+    output_path: Path,
+    *,
+    distance_bins: int,
+    distance_mode: str,
+    distance_percent_denominator: str,
+    dpi: int,
+) -> None:
+    centers, widths, hist, n_viable, n_all = compute_viable_distance_histogram(df, distance_bins=distance_bins)
     title_stub = infer_title_stub(df, output_path)
-    ax.set_title(f"Number of viable points versus 4D distance from attractor\\n{title_stub}", fontsize=13, fontweight="bold")
+
+    if distance_mode == "count":
+        yvals = hist
+        ylabel = "Number of viable points"
+        legend_label = f"Viable points (N={n_viable})"
+    else:
+        denom = n_viable if distance_percent_denominator == "viable" else n_all
+        if denom <= 0:
+            raise ValueError("Cannot normalize histogram because denominator is zero.")
+        yvals = 100.0 * hist / float(denom)
+        if distance_percent_denominator == "viable":
+            ylabel = "Viable points [% of viable points]"
+            legend_label = f"Viable points, % of viable (N={n_viable})"
+        else:
+            ylabel = "Viable points [% of all points]"
+            legend_label = f"Viable points, % of all (N_all={n_all}, N_viable={n_viable})"
+
+    fig, ax = plt.subplots(figsize=(9.6, 6.0), constrained_layout=True)
+    ax.bar(
+        centers,
+        yvals,
+        width=widths,
+        color=DISTANCE_COLOR,
+        edgecolor="white",
+        linewidth=0.8,
+        alpha=0.9,
+        align="center",
+        label=legend_label,
+    )
+
+    ax.set_title(
+        f"Viable points versus 4D distance from attractor\n{title_stub}",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.set_xlabel("4D distance from attractor")
-    ax.set_ylabel("Number of viable points")
+    ax.set_ylabel(ylabel)
     ax.grid(True, axis="y", alpha=0.25)
+    if distance_mode == "percent":
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=100.0))
+    ax.legend(frameon=True)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)
     plt.close(fig)
@@ -206,6 +298,7 @@ def main() -> None:
         csv_path = ROOT / csv_path
     df = load_point_records(csv_path)
     time_unit = resolve_time_unit(df, args.time_unit)
+
     if args.output_dir is None:
         output_dir = csv_path.parent / "figures"
     else:
@@ -213,11 +306,31 @@ def main() -> None:
         if not output_dir.is_absolute():
             output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
     stem = csv_path.stem
     phenotype_png = output_dir / f"{stem}_phenotype_time_smoothed.png"
-    viable_distance_png = output_dir / f"{stem}_viable_distance_hist.png"
-    plot_smoothed_phenotype_histograms(df, phenotype_png, time_bins=args.time_bins, smooth_window=args.smooth_window, time_unit=time_unit, dpi=args.dpi)
-    plot_viable_distance_histogram(df, viable_distance_png, distance_bins=args.distance_bins, dpi=args.dpi)
+    suffix = f"{args.distance_mode}"
+    if args.distance_mode == "percent":
+        suffix += f"_{args.distance_percent_denominator}"
+    viable_distance_png = output_dir / f"{stem}_viable_distance_hist_{suffix}.png"
+
+    plot_smoothed_phenotype_histograms(
+        df,
+        phenotype_png,
+        time_bins=args.time_bins,
+        smooth_window=args.smooth_window,
+        time_unit=time_unit,
+        dpi=args.dpi,
+    )
+    plot_viable_distance_histogram(
+        df,
+        viable_distance_png,
+        distance_bins=args.distance_bins,
+        distance_mode=args.distance_mode,
+        distance_percent_denominator=args.distance_percent_denominator,
+        dpi=args.dpi,
+    )
+
     print(f"Loaded rows: {len(df)}")
     print(f"Resolved time unit: {time_unit}")
     print(f"Phenotype plot: {phenotype_png}")
