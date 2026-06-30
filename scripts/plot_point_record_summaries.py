@@ -1,36 +1,33 @@
+
 #!/usr/bin/env python3
 """
 Read a point-record CSV exported by export_trajectory_point_records.py and
-produce two distance-based summary plots using only points from trajectories
-that remain viable throughout their sampled lifetime.
+produce two distance-based summary plots.
 
 Plots
 -----
 1) Phenotype labels versus 4D distance from the attractor, shown as a stacked
-   histogram in either raw counts or 100% stacked percentages.
-2) Viable-point distance histogram, defaulting to percentage of viable points.
+   histogram in either raw counts or 100% stacked percentages. Only points from
+   fully viable trajectories are retained.
+2) Cumulative percentage of retained viable points versus 4D distance from the
+   attractor.
 
-Viability filtering
--------------------
-Before plotting, the script excludes every point belonging to a trajectory that
-contains any non-viable point. In other words, only trajectories whose sampled
-points are all labeled `viable` are retained for both plots.
+Filtering rule
+--------------
+A trajectory survives if all of its sampled points have viability_label ==
+"viable". The phenotype plot and cumulative viable-distance plot are both built
+from the retained set only.
 
-Complementary x-axis
---------------------
-The phenotype-distance plot includes a secondary x-axis showing a complementary
-measure: an estimated minimum signed distance to the viability-box boundary for
-points at the corresponding attractor-distance bin center.
+Secondary x-axis
+----------------
+The phenotype-distance plot includes a sparse top x-axis showing a complementary
+summary measure: the median signed minimum distance to the viability-box
+boundary for the corresponding attractor-distance bin.
 
-Interpretation of the secondary axis:
-- positive values: inside the viability box (distance to nearest boundary face)
-- zero: on the viability boundary
-- negative values: outside the viability box (magnitude indicates overshoot)
-
-The secondary axis is a binned summary, not an exact pointwise coordinate map.
-For each attractor-distance bin center on the primary x-axis, the script finds
-points in the nearest bin and reports the median signed distance-to-box value
-for those points.
+Signed box distance interpretation:
+- positive: inside the box
+- zero: on the boundary
+- negative: outside the box
 """
 from __future__ import annotations
 
@@ -51,21 +48,19 @@ from classifiers.static_classifier import STATE_COLORS
 from config import DEFAULT_BOUNDS
 
 FALLBACK_COLOR = "#7f7f7f"
-DISTANCE_COLOR = "#2166ac"
+CUMULATIVE_COLOR = "#2166ac"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot phenotype-distance and viable-distance summaries from a point-record CSV."
+        description="Plot phenotype-distance and cumulative viable-distance summaries from a point-record CSV."
     )
     parser.add_argument("--csv", required=True, help="Path to the point-record CSV produced by export_trajectory_point_records.py.")
     parser.add_argument("--output-dir", default=None, help="Output directory for PNG figures. Defaults to a sibling 'figures' folder next to the CSV.")
     parser.add_argument("--phenotype-distance-bins", type=int, default=40, help="Number of equally spaced distance bins for the phenotype-distance stacked histogram.")
     parser.add_argument("--phenotype-distance-mode", choices=["count", "percent"], default="percent", help="Show phenotype-by-distance as raw counts or 100%% stacked percentages.")
-    parser.add_argument("--distance-bins", type=int, default=40, help="Number of equally spaced bins for the viable-point distance histogram.")
-    parser.add_argument("--distance-mode", choices=["count", "percent"], default="percent", help="Plot viable-point distance histogram as raw counts or percentages.")
-    parser.add_argument("--distance-percent-denominator", choices=["viable", "all"], default="viable", help="When --distance-mode percent is used, normalize by number of retained viable points or all retained points.")
-    parser.add_argument("--time-unit", default=None, help="Unused for distance plots but accepted for interface compatibility.")
+    parser.add_argument("--cumulative-distance-bins", type=int, default=80, help="Number of equally spaced bins for the cumulative viable-distance curve.")
+    parser.add_argument("--top-axis-ticks", type=int, default=6, help="Maximum number of labeled ticks on the top complementary x-axis.")
     parser.add_argument("--dpi", type=int, default=220, help="Output figure DPI.")
     return parser.parse_args()
 
@@ -92,16 +87,17 @@ def infer_title_stub(df: pd.DataFrame, csv_path: Path) -> str:
     return f"{scenario} | {classifier}"
 
 
-def retain_only_fully_viable_trajectories(df: pd.DataFrame) -> pd.DataFrame:
-    good_ids = []
+def split_survival_sets(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    surviving_ids = []
     for traj_id, group in df.groupby("trajectory_id"):
         labels = group["viability_label"].astype(str)
         if bool((labels == "viable").all()):
-            good_ids.append(traj_id)
-    kept = df[df["trajectory_id"].isin(good_ids)].copy()
-    if kept.empty:
+            surviving_ids.append(traj_id)
+    surviving = df[df["trajectory_id"].isin(surviving_ids)].copy()
+    dropped = df[~df["trajectory_id"].isin(surviving_ids)].copy()
+    if surviving.empty:
         raise ValueError("No fully viable trajectories remain after filtering.")
-    return kept
+    return surviving, dropped
 
 
 def signed_distance_to_viability_box(row: pd.Series, bounds: dict) -> float:
@@ -124,14 +120,7 @@ def signed_distance_to_viability_box(row: pd.Series, bounds: dict) -> float:
     )
 
     if inside:
-        distances_to_faces = [
-            C - C_min,
-            T - T_min,
-            T_max - T,
-            E - E_min,
-            E_max - E,
-            O - O_min,
-        ]
+        distances_to_faces = [C - C_min, T - T_min, T_max - T, E - E_min, E_max - E, O - O_min]
         return float(min(distances_to_faces))
 
     violations = []
@@ -150,19 +139,32 @@ def signed_distance_to_viability_box(row: pd.Series, bounds: dict) -> float:
     return -float(max(violations))
 
 
-def dataset_summary(df: pd.DataFrame) -> dict:
+def attach_signed_box_distance(df: pd.DataFrame, bounds: dict) -> pd.DataFrame:
+    out = df.copy()
+    out["signed_box_distance"] = out.apply(lambda row: signed_distance_to_viability_box(row, bounds), axis=1)
+    return out
+
+
+def summarize_sets(raw_df: pd.DataFrame, surviving_df: pd.DataFrame) -> dict:
+    total_traj = int(raw_df["trajectory_id"].nunique())
+    surviving_traj = int(surviving_df["trajectory_id"].nunique())
+    total_points = int(len(raw_df))
+    surviving_points = int(len(surviving_df))
+    max_distance_surviving = float(surviving_df["distance_from_attractor_4d"].max())
     return {
-        "n_trajectories": int(df["trajectory_id"].nunique()),
-        "n_points": int(len(df)),
-        "max_distance": float(df["distance_from_attractor_4d"].max()),
+        "total_trajectories": total_traj,
+        "surviving_trajectories": surviving_traj,
+        "total_points": total_points,
+        "surviving_points": surviving_points,
+        "max_distance_surviving": max_distance_surviving,
     }
 
 
 def summary_text(summary: dict) -> str:
     return (
-        f"Retained trajectories={summary['n_trajectories']}, "
-        f"Retained points={summary['n_points']}, "
-        f"Max dist={summary['max_distance']:.3g}"
+        f"Traj: total={summary['total_trajectories']}, surviving={summary['surviving_trajectories']} | "
+        f"Points: total={summary['total_points']}, surviving={summary['surviving_points']} | "
+        f"Max surviving dist={summary['max_distance_surviving']:.3g}"
     )
 
 
@@ -174,12 +176,6 @@ def distance_edges(df: pd.DataFrame, n_bins: int) -> np.ndarray:
     if d_max <= d_min:
         d_max = d_min + 1e-9
     return np.linspace(d_min, d_max, int(n_bins) + 1)
-
-
-def attach_signed_box_distance(df: pd.DataFrame, bounds: dict) -> pd.DataFrame:
-    out = df.copy()
-    out["signed_box_distance"] = out.apply(lambda row: signed_distance_to_viability_box(row, bounds), axis=1)
-    return out
 
 
 def build_secondary_axis_lookup(df: pd.DataFrame, edges: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -224,11 +220,18 @@ def build_phenotype_distance_counts(df: pd.DataFrame, n_bins: int) -> tuple[np.n
     return centers, widths, labels, counts, sec_x, sec_vals
 
 
-def add_secondary_box_distance_axis(ax, primary_centers: np.ndarray, signed_box_medians: np.ndarray) -> None:
+def choose_sparse_ticks(values: np.ndarray, max_ticks: int) -> np.ndarray:
+    if len(values) <= max_ticks:
+        return np.arange(len(values), dtype=int)
+    return np.linspace(0, len(values) - 1, max_ticks, dtype=int)
+
+
+def add_secondary_box_distance_axis(ax, primary_centers: np.ndarray, signed_box_medians: np.ndarray, max_ticks: int) -> None:
     secax = ax.secondary_xaxis('top')
-    secax.set_xticks(primary_centers)
-    secax.set_xticklabels([f"{v:.2g}" for v in signed_box_medians], rotation=0)
-    secax.set_xlabel("Median signed min distance to viability box boundary at matching attractor-distance bin")
+    tick_idx = choose_sparse_ticks(primary_centers, max_ticks=max_ticks)
+    secax.set_xticks(primary_centers[tick_idx])
+    secax.set_xticklabels([f"{signed_box_medians[i]:.2g}" for i in tick_idx])
+    secax.set_xlabel("Median signed min distance to viability-box boundary")
 
 
 def plot_phenotype_distance_histogram(
@@ -237,13 +240,14 @@ def plot_phenotype_distance_histogram(
     *,
     phenotype_distance_bins: int,
     phenotype_distance_mode: str,
+    top_axis_ticks: int,
+    summary: dict,
+    title_stub: str,
     dpi: int,
 ) -> None:
     centers, widths, labels, counts, sec_x, sec_vals = build_phenotype_distance_counts(df, n_bins=phenotype_distance_bins)
-    summary = dataset_summary(df)
-    title_stub = infer_title_stub(df, output_path)
 
-    fig, ax = plt.subplots(figsize=(11.6, 7.0), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(11.8, 7.1), constrained_layout=True)
     bottoms = np.zeros(len(centers), dtype=float)
 
     if phenotype_distance_mode == "percent":
@@ -253,7 +257,7 @@ def plot_phenotype_distance_histogram(
         ylabel = "Phenotype composition [% within distance bin]"
     else:
         plot_counts = counts
-        ylabel = "Number of retained points"
+        ylabel = "Number of surviving points"
 
     for idx, label in enumerate(labels):
         color = STATE_COLORS.get(label, FALLBACK_COLOR)
@@ -280,7 +284,7 @@ def plot_phenotype_distance_histogram(
     ax.grid(True, axis="y", alpha=0.25)
     if phenotype_distance_mode == "percent":
         ax.yaxis.set_major_formatter(PercentFormatter(xmax=100.0))
-    add_secondary_box_distance_axis(ax, sec_x, sec_vals)
+    add_secondary_box_distance_axis(ax, sec_x, sec_vals, max_ticks=top_axis_ticks)
     ax.legend(frameon=True, ncol=2, title="Phenotype labels")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -288,66 +292,40 @@ def plot_phenotype_distance_histogram(
     plt.close(fig)
 
 
-def compute_viable_distance_histogram(df: pd.DataFrame, *, distance_bins: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
-    edges = distance_edges(df, n_bins=distance_bins)
-    distances = df["distance_from_attractor_4d"].to_numpy(dtype=float)
+def build_cumulative_viable_curve(df: pd.DataFrame, n_bins: int) -> tuple[np.ndarray, np.ndarray, int]:
+    edges = distance_edges(df, n_bins=n_bins)
+    distances = np.sort(df["distance_from_attractor_4d"].to_numpy(dtype=float))
     hist, _ = np.histogram(distances, bins=edges)
-    centers = 0.5 * (edges[:-1] + edges[1:])
-    widths = np.diff(edges)
-    return centers, widths, hist.astype(float), len(df), len(df)
+    cumulative = np.cumsum(hist).astype(float)
+    n = len(distances)
+    y = 100.0 * cumulative / float(n)
+    x = edges[1:]
+    return x, y, n
 
 
-def plot_viable_distance_histogram(
+def plot_cumulative_viable_distance(
     df: pd.DataFrame,
     output_path: Path,
     *,
-    distance_bins: int,
-    distance_mode: str,
-    distance_percent_denominator: str,
+    cumulative_distance_bins: int,
+    summary: dict,
+    title_stub: str,
     dpi: int,
 ) -> None:
-    centers, widths, hist, n_viable, n_all = compute_viable_distance_histogram(df, distance_bins=distance_bins)
-    summary = dataset_summary(df)
-    title_stub = infer_title_stub(df, output_path)
+    x, y, n = build_cumulative_viable_curve(df, n_bins=cumulative_distance_bins)
 
-    if distance_mode == "count":
-        yvals = hist
-        ylabel = "Number of retained viable points"
-        legend_label = f"Retained viable points (N={n_viable})"
-    else:
-        denom = n_viable if distance_percent_denominator == "viable" else n_all
-        if denom <= 0:
-            raise ValueError("Cannot normalize histogram because denominator is zero.")
-        yvals = 100.0 * hist / float(denom)
-        if distance_percent_denominator == "viable":
-            ylabel = "Retained viable points [% of retained viable points]"
-            legend_label = f"Retained viable points, % of viable (N={n_viable})"
-        else:
-            ylabel = "Retained viable points [% of retained points]"
-            legend_label = f"Retained viable points, % of all retained (N={n_all})"
-
-    fig, ax = plt.subplots(figsize=(10.2, 6.2), constrained_layout=True)
-    ax.bar(
-        centers,
-        yvals,
-        width=widths,
-        color=DISTANCE_COLOR,
-        edgecolor="white",
-        linewidth=0.8,
-        alpha=0.9,
-        align="center",
-        label=legend_label,
-    )
+    fig, ax = plt.subplots(figsize=(10.4, 6.2), constrained_layout=True)
+    ax.step(x, y, where="post", color=CUMULATIVE_COLOR, linewidth=2.4, label=f"Cumulative % of surviving viable points (N={n})")
     ax.set_title(
-        f"Retained viable points versus 4D distance from attractor\n{title_stub}\n{summary_text(summary)}",
+        f"Cumulative surviving viable points versus 4D distance from attractor\n{title_stub}\n{summary_text(summary)}",
         fontsize=13,
         fontweight="bold",
     )
     ax.set_xlabel("4D distance from attractor")
-    ax.set_ylabel(ylabel)
-    ax.grid(True, axis="y", alpha=0.25)
-    if distance_mode == "percent":
-        ax.yaxis.set_major_formatter(PercentFormatter(xmax=100.0))
+    ax.set_ylabel("Cumulative [% of surviving viable points]")
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=100.0))
+    ax.set_ylim(0, 100)
+    ax.grid(True, alpha=0.25)
     ax.legend(frameon=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -362,8 +340,8 @@ def main() -> None:
         csv_path = ROOT / csv_path
 
     raw_df = load_point_records(csv_path)
-    kept_df = retain_only_fully_viable_trajectories(raw_df)
-    kept_df = attach_signed_box_distance(kept_df, DEFAULT_BOUNDS)
+    surviving_df, _dropped_df = split_survival_sets(raw_df)
+    surviving_df = attach_signed_box_distance(surviving_df, DEFAULT_BOUNDS)
 
     if args.output_dir is None:
         output_dir = csv_path.parent / "figures"
@@ -373,36 +351,39 @@ def main() -> None:
             output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    title_stub = infer_title_stub(surviving_df, csv_path)
+    summary = summarize_sets(raw_df, surviving_df)
+
     stem = csv_path.stem
     phenotype_png = output_dir / f"{stem}_phenotype_distance_stacked_{args.phenotype_distance_mode}.png"
-    suffix = f"{args.distance_mode}"
-    if args.distance_mode == "percent":
-        suffix += f"_{args.distance_percent_denominator}"
-    viable_distance_png = output_dir / f"{stem}_viable_distance_hist_{suffix}.png"
+    cumulative_png = output_dir / f"{stem}_viable_distance_cumulative_percent.png"
 
     plot_phenotype_distance_histogram(
-        kept_df,
+        surviving_df,
         phenotype_png,
         phenotype_distance_bins=args.phenotype_distance_bins,
         phenotype_distance_mode=args.phenotype_distance_mode,
+        top_axis_ticks=args.top_axis_ticks,
+        summary=summary,
+        title_stub=title_stub,
         dpi=args.dpi,
     )
-    plot_viable_distance_histogram(
-        kept_df,
-        viable_distance_png,
-        distance_bins=args.distance_bins,
-        distance_mode=args.distance_mode,
-        distance_percent_denominator=args.distance_percent_denominator,
+    plot_cumulative_viable_distance(
+        surviving_df,
+        cumulative_png,
+        cumulative_distance_bins=args.cumulative_distance_bins,
+        summary=summary,
+        title_stub=title_stub,
         dpi=args.dpi,
     )
 
-    summary = dataset_summary(kept_df)
-    print(f"Original trajectories: {raw_df['trajectory_id'].nunique()}")
-    print(f"Retained trajectories: {summary['n_trajectories']}")
-    print(f"Retained points: {summary['n_points']}")
-    print(f"Max distance from attractor (retained set): {summary['max_distance']}")
+    print(f"Total trajectories: {summary['total_trajectories']}")
+    print(f"Surviving trajectories: {summary['surviving_trajectories']}")
+    print(f"Total points: {summary['total_points']}")
+    print(f"Surviving points: {summary['surviving_points']}")
+    print(f"Max surviving distance from attractor: {summary['max_distance_surviving']}")
     print(f"Phenotype-distance plot: {phenotype_png}")
-    print(f"Viable-distance plot: {viable_distance_png}")
+    print(f"Cumulative viable-distance plot: {cumulative_png}")
 
 
 if __name__ == "__main__":
