@@ -26,7 +26,7 @@ Typical usage
 -------------
 python scripts/plot_all_static_parameters_for_9_scenarios.py --list-scenarios
 python scripts/plot_all_static_parameters_for_9_scenarios.py
-python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity (baseline)"
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity"
 python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-contains porosity
 python scripts/plot_all_static_parameters_for_9_scenarios.py --drop-constant-columns --normalize
 """
