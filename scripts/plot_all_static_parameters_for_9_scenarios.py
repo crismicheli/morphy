@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Plot all static simulation parameters used by selected scenarios.
@@ -16,6 +15,8 @@ This script makes one single figure:
 - x-axis: scenarios
 - within each scenario: one colored bar per parameter
 - bar color identifies the parameter
+- an asterisk is drawn above bars whose effective value differs from the default
+  value for that parameter
 
 Scenario selection behavior
 ---------------------------
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import sys
 
 import matplotlib.pyplot as plt
@@ -73,20 +75,55 @@ def is_number(x) -> bool:
     return isinstance(x, (int, float, np.integer, np.floating)) and np.isfinite(float(x))
 
 
+def clean_label(label: str) -> str:
+    cleaned = re.sub(r"\b(stable|borderline|unstable)\b", "", label, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_,;:")
+    return cleaned or label
+
+
 def scenario_label(s: dict, idx: int) -> str:
-    return str(s.get("label") or s.get("name") or s.get("scenario") or f"scenario_{idx+1}")
+    raw = str(s.get("label") or s.get("name") or s.get("scenario") or f"scenario_{idx+1}")
+    return clean_label(raw)
 
 
-def effective_parameters_for_scenario(scenario: dict) -> dict:
+def extract_p_from_label(label: str) -> float | None:
+    m = re.search(r"\(\s*p\s*=\s*([0-9]*\.?[0-9]+)", label)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def default_parameter_values() -> dict:
+    defaults = {}
+    for k, v in dict(DEFAULT_PARAMS).items():
+        if is_number(v):
+            defaults[str(k)] = float(v)
+    defaults["p"] = float(DEFAULT_PARAMS.get("p")) if is_number(DEFAULT_PARAMS.get("p")) else np.nan
+    return defaults
+
+
+def effective_parameters_for_scenario(scenario: dict, label: str) -> dict:
     params = {}
     for k, v in dict(DEFAULT_PARAMS).items():
         if is_number(v):
             params[str(k)] = float(v)
+
+    if "p" not in params:
+        params["p"] = np.nan
+
     overrides = scenario.get("param_overrides", {})
     if isinstance(overrides, dict):
         for k, v in overrides.items():
             if is_number(v):
                 params[str(k)] = float(v)
+
+    if is_number(scenario.get("p")):
+        params["p"] = float(scenario["p"])
+    else:
+        p_from_label = extract_p_from_label(label)
+        if p_from_label is not None:
+            params["p"] = p_from_label
+
     return params
 
 
@@ -138,13 +175,16 @@ def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[tu
 def build_parameter_table(selected_scenarios: list[tuple[str, dict]], drop_constant_columns: bool, max_params: int | None) -> pd.DataFrame:
     rows = []
     for label, scenario in selected_scenarios:
-        params = effective_parameters_for_scenario(scenario)
+        params = effective_parameters_for_scenario(scenario, label)
         rows.append({"scenario": label, **params})
 
     df = pd.DataFrame(rows).set_index("scenario")
     df = df.dropna(axis=1, how="all")
     if df.empty or df.shape[1] == 0:
-        raise ValueError("No numeric static parameters were found after merging DEFAULT_PARAMS with scenario overrides.")
+        raise ValueError("No numeric static parameters were found after merging DEFAULT_PARAMS with scenario overrides and p.")
+
+    if "p" not in df.columns:
+        raise ValueError("Parameter 'p' could not be recovered from defaults, scenario['p'], or the scenario label.")
 
     if drop_constant_columns:
         keep_cols = []
@@ -152,13 +192,18 @@ def build_parameter_table(selected_scenarios: list[tuple[str, dict]], drop_const
             vals = df[col].to_numpy(dtype=float)
             if not np.allclose(vals, vals[0], equal_nan=True):
                 keep_cols.append(col)
+        if "p" not in keep_cols and "p" in df.columns:
+            keep_cols = ["p"] + keep_cols
         df = df[keep_cols]
         if df.shape[1] == 0:
             raise ValueError("All selected parameters were constant across the chosen scenarios.")
 
-    df = df.reindex(sorted(df.columns), axis=1)
+    ordered_cols = ["p"] + sorted([c for c in df.columns if c != "p"])
+    df = df[ordered_cols]
+
     if max_params is not None:
-        df = df.iloc[:, :max_params]
+        remaining = [c for c in df.columns if c != "p"]
+        df = df[["p"] + remaining[: max(0, max_params - 1)]]
     return df
 
 
@@ -175,7 +220,20 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def plot_grouped_bars(df_plot: pd.DataFrame, outpath: Path, title: str, ylabel: str, dpi: int) -> None:
+def build_changed_mask(df: pd.DataFrame, defaults: dict) -> pd.DataFrame:
+    mask = pd.DataFrame(False, index=df.index, columns=df.columns)
+    for col in df.columns:
+        default_val = defaults.get(col, np.nan)
+        if np.isnan(default_val):
+            if col == "p":
+                mask[col] = True
+            continue
+        vals = df[col].to_numpy(dtype=float)
+        mask[col] = ~np.isclose(vals, default_val, equal_nan=True)
+    return mask
+
+
+def plot_grouped_bars(df_raw: pd.DataFrame, df_plot: pd.DataFrame, changed_mask: pd.DataFrame, outpath: Path, title: str, ylabel: str, dpi: int) -> None:
     scenarios = list(df_plot.index)
     params = list(df_plot.columns)
     n_scen = len(scenarios)
@@ -187,15 +245,45 @@ def plot_grouped_bars(df_plot: pd.DataFrame, outpath: Path, title: str, ylabel: 
     offsets = (np.arange(n_params) - (n_params - 1) / 2.0) * bar_width
 
     fig_w = max(11, 1.3 * n_scen + 0.28 * n_params + 4)
-    fig_h = 7.2
+    fig_h = 7.4
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
 
     cmap = plt.get_cmap("tab20")
     colors = [cmap(i % 20) for i in range(n_params)]
 
+    ymax = np.nanmax(df_plot.to_numpy(dtype=float)) if df_plot.size else 1.0
+    ymin = np.nanmin(df_plot.to_numpy(dtype=float)) if df_plot.size else 0.0
+    yrange = ymax - ymin if ymax > ymin else max(abs(ymax), 1.0)
+    pad = 0.06 * yrange
+
     for j, param in enumerate(params):
         heights = df_plot[param].to_numpy(dtype=float)
-        ax.bar(x + offsets[j], heights, width=bar_width * 0.95, label=param, color=colors[j], edgecolor="black", linewidth=0.3)
+        bars = ax.bar(
+            x + offsets[j],
+            heights,
+            width=bar_width * 0.95,
+            label=param,
+            color=colors[j],
+            edgecolor="black",
+            linewidth=0.3,
+        )
+        changed = changed_mask[param].to_numpy(dtype=bool)
+        for bar, is_changed in zip(bars, changed):
+            if not is_changed:
+                continue
+            y = bar.get_height()
+            star_y = y + pad if y >= 0 else y - pad
+            va = "bottom" if y >= 0 else "top"
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                star_y,
+                "*",
+                ha="center",
+                va=va,
+                fontsize=14,
+                fontweight="bold",
+                color="black",
+            )
 
     ax.set_xticks(x)
     ax.set_xticklabels(scenarios, rotation=25, ha="right")
@@ -203,6 +291,12 @@ def plot_grouped_bars(df_plot: pd.DataFrame, outpath: Path, title: str, ylabel: 
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.grid(True, axis="y", alpha=0.25)
     ax.legend(title="Parameter", bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.0, frameon=True, fontsize=8)
+
+    top_limit = ymax + 3 * pad
+    bottom_limit = min(0, ymin - 2 * pad)
+    ax.set_ylim(bottom_limit, top_limit)
+
+    ax.text(0.0, 1.02, "* differs from default value", transform=ax.transAxes, ha="left", va="bottom", fontsize=9)
 
     fig.savefig(outpath, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -222,6 +316,8 @@ def main() -> None:
 
     selected_scenarios = select_scenarios(args.scenario_labels, args.exact_labels)
     df = build_parameter_table(selected_scenarios, args.drop_constant_columns, args.max_params)
+    defaults = default_parameter_values()
+    changed_mask = build_changed_mask(df, defaults)
     df_plot = normalize_columns(df) if args.normalize_columns else df
 
     if args.scenario_labels:
@@ -232,16 +328,21 @@ def main() -> None:
     const_tag = "varying_only" if args.drop_constant_columns else "all_static"
 
     csv_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_{value_tag}.csv"
+    changed_csv_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_{value_tag}_changed_vs_default.csv"
     barplot_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_{value_tag}_grouped_bars.png"
 
     df.to_csv(csv_path)
+    changed_mask.astype(int).to_csv(changed_csv_path)
     ylabel = "Normalized parameter value (0-1 within parameter)" if args.normalize_columns else "Parameter value"
     title = f"Static simulation parameters by scenario ({scenario_tag}, {const_tag}, {value_tag})"
-    plot_grouped_bars(df_plot, barplot_path, title=title, ylabel=ylabel, dpi=args.dpi)
+    plot_grouped_bars(df, df_plot, changed_mask, barplot_path, title=title, ylabel=ylabel, dpi=args.dpi)
 
     print(f"Scenarios selected: {len(df.index)}")
     print(f"Parameters plotted: {len(df.columns)}")
+    print(f"Includes p: {'p' in df.columns}")
+    print(f"Parameter list: {', '.join(df.columns)}")
     print(f"CSV: {csv_path}")
+    print(f"Changed mask CSV: {changed_csv_path}")
     print(f"Grouped bar plot: {barplot_path}")
 
 
