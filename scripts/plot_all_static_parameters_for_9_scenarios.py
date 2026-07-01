@@ -10,10 +10,13 @@ scenario: start from DEFAULT_PARAMS, then overwrite with each scenario's
 param_overrides. The resulting table therefore represents the actual parameter
 values used in each simulation.
 
-This version is more robust about scenario selection:
+Scenario selection behavior
+---------------------------
+This version is deliberately forgiving:
 - By default, it uses the first 9 scenarios in SCENARIOS.
-- It can print all available scenario labels.
-- It supports exact label matching or substring-based matching.
+- `--list-scenarios` prints all available labels.
+- `--scenario-labels` performs case-insensitive substring matching by default.
+- `--exact-labels` switches `--scenario-labels` to exact matching.
 
 Outputs
 -------
@@ -25,10 +28,9 @@ Outputs
 Typical usage
 -------------
 python scripts/plot_all_static_parameters_for_9_scenarios.py --list-scenarios
-python scripts/plot_all_static_parameters_for_9_scenarios.py
-python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity"
-python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-contains porosity
-python scripts/plot_all_static_parameters_for_9_scenarios.py --drop-constant-columns --normalize
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity" "Intermediate porosity" "Low porosity"
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels porosity --drop-constant-columns
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity  (p=0.75) — borderline" --exact-labels
 """
 from __future__ import annotations
 
@@ -50,8 +52,8 @@ from config import DEFAULT_PARAMS, SCENARIOS
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot all static simulation parameters across scenarios.")
     parser.add_argument("--output-dir", default="output/static_parameter_plots", help="Directory for output files.")
-    parser.add_argument("--scenario-labels", nargs="*", default=None, help="Optional exact scenario labels to include.")
-    parser.add_argument("--scenario-contains", nargs="*", default=None, help="Optional substrings used to match scenario labels case-insensitively.")
+    parser.add_argument("--scenario-labels", nargs="*", default=None, help="Scenario selectors. By default these are treated as case-insensitive substrings, not exact labels.")
+    parser.add_argument("--exact-labels", action="store_true", help="Interpret --scenario-labels as exact labels instead of substring matches.")
     parser.add_argument("--list-scenarios", action="store_true", help="Print all available scenario labels and exit.")
     parser.add_argument("--drop-constant-columns", action="store_true", help="Drop parameters that have the same value in every selected scenario.")
     parser.add_argument("--normalize", action="store_true", help="Also save a normalized heatmap using column-wise z-scores when possible.")
@@ -81,10 +83,7 @@ def effective_parameters_for_scenario(scenario: dict) -> dict:
 
 
 def available_scenarios() -> list[tuple[str, dict]]:
-    out = []
-    for i, s in enumerate(SCENARIOS):
-        out.append((scenario_label(s, i), s))
-    return out
+    return [(scenario_label(s, i), s) for i, s in enumerate(SCENARIOS)]
 
 
 def print_available_scenarios() -> None:
@@ -92,37 +91,42 @@ def print_available_scenarios() -> None:
         print(f"{i:02d}. {lab}")
 
 
-def select_scenarios(scenario_labels: list[str] | None, scenario_contains: list[str] | None) -> list[dict]:
+def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[dict]:
     labeled = available_scenarios()
+    if not selectors:
+        return [s for _, s in labeled[:9]]
 
-    if scenario_labels and scenario_contains:
-        raise ValueError("Use either --scenario-labels or --scenario-contains, not both.")
-
-    if scenario_labels:
+    if exact_labels:
         available = {lab: s for lab, s in labeled}
-        missing = [lab for lab in scenario_labels if lab not in available]
+        missing = [lab for lab in selectors if lab not in available]
         if missing:
             all_labels = [lab for lab, _ in labeled]
             raise ValueError(
                 "Unknown scenario labels: " + str(missing) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
             )
-        return [available[lab] for lab in scenario_labels]
+        return [available[lab] for lab in selectors]
 
-    if scenario_contains:
-        needles = [x.lower() for x in scenario_contains]
-        selected = []
-        for lab, s in labeled:
-            low = lab.lower()
-            if any(needle in low for needle in needles):
+    selected = []
+    selected_labels = set()
+    misses = []
+    all_labels = [lab for lab, _ in labeled]
+    for selector in selectors:
+        needle = selector.lower()
+        matches = [(lab, s) for lab, s in labeled if needle in lab.lower()]
+        if not matches:
+            misses.append(selector)
+            continue
+        for lab, s in matches:
+            if lab not in selected_labels:
                 selected.append(s)
-        if not selected:
-            all_labels = [lab for lab, _ in labeled]
-            raise ValueError(
-                "No scenario labels matched the requested substrings: " + str(scenario_contains) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
-            )
-        return selected
-
-    return [s for _, s in labeled[:9]]
+                selected_labels.add(lab)
+    if misses:
+        raise ValueError(
+            "No scenario labels matched these substring selectors: " + str(misses) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
+        )
+    if not selected:
+        raise ValueError("No scenarios were selected.")
+    return selected
 
 
 def build_parameter_table(selected_scenarios: list[dict], drop_constant_columns: bool) -> pd.DataFrame:
@@ -220,13 +224,11 @@ def main() -> None:
         output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    selected_scenarios = select_scenarios(args.scenario_labels, args.scenario_contains)
+    selected_scenarios = select_scenarios(args.scenario_labels, args.exact_labels)
     df = build_parameter_table(selected_scenarios, drop_constant_columns=args.drop_constant_columns)
 
     if args.scenario_labels:
-        scenario_tag = "exact_labels"
-    elif args.scenario_contains:
-        scenario_tag = "contains_match"
+        scenario_tag = "exact_labels" if args.exact_labels else "substring_labels"
     else:
         scenario_tag = "first9"
     const_tag = "varying_only" if args.drop_constant_columns else "all_static"
