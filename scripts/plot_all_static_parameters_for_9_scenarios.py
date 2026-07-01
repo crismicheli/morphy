@@ -10,6 +10,13 @@ scenario: start from DEFAULT_PARAMS, then overwrite with each scenario's
 param_overrides. The resulting table therefore represents the actual parameter
 values used in each simulation.
 
+Plot style
+----------
+This script makes one single figure:
+- x-axis: scenarios
+- within each scenario: one colored bar per parameter
+- bar color identifies the parameter
+
 Scenario selection behavior
 ---------------------------
 This version is deliberately forgiving:
@@ -50,13 +57,14 @@ from config import DEFAULT_PARAMS, SCENARIOS
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Plot all static simulation parameters across scenarios.")
-    parser.add_argument("--output-dir", default="output/static_parameter_plots", help="Directory for output files.")
+    parser = argparse.ArgumentParser(description="Plot static simulation parameters as grouped bars across scenarios.")
+    parser.add_argument("--output-dir", default="output/static_parameter_barplots", help="Directory for output files.")
     parser.add_argument("--scenario-labels", nargs="*", default=None, help="Scenario selectors. By default these are treated as case-insensitive substrings, not exact labels.")
     parser.add_argument("--exact-labels", action="store_true", help="Interpret --scenario-labels as exact labels instead of substring matches.")
     parser.add_argument("--list-scenarios", action="store_true", help="Print all available scenario labels and exit.")
     parser.add_argument("--drop-constant-columns", action="store_true", help="Drop parameters that have the same value in every selected scenario.")
-    parser.add_argument("--normalize", action="store_true", help="Also save a normalized heatmap using column-wise z-scores when possible.")
+    parser.add_argument("--normalize-columns", action="store_true", help="Scale each parameter column independently to [0, 1] before plotting, useful when parameters have very different magnitudes.")
+    parser.add_argument("--max-params", type=int, default=None, help="Optional cap on number of parameters plotted, after filtering.")
     parser.add_argument("--dpi", type=int, default=220, help="Figure DPI.")
     return parser.parse_args()
 
@@ -91,10 +99,10 @@ def print_available_scenarios() -> None:
         print(f"{i:02d}. {lab}")
 
 
-def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[dict]:
+def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[tuple[str, dict]]:
     labeled = available_scenarios()
     if not selectors:
-        return [s for _, s in labeled[:9]]
+        return labeled[:9]
 
     if exact_labels:
         available = {lab: s for lab, s in labeled}
@@ -104,10 +112,10 @@ def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[di
             raise ValueError(
                 "Unknown scenario labels: " + str(missing) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
             )
-        return [available[lab] for lab in selectors]
+        return [(lab, available[lab]) for lab in selectors]
 
     selected = []
-    selected_labels = set()
+    seen = set()
     misses = []
     all_labels = [lab for lab, _ in labeled]
     for selector in selectors:
@@ -117,22 +125,19 @@ def select_scenarios(selectors: list[str] | None, exact_labels: bool) -> list[di
             misses.append(selector)
             continue
         for lab, s in matches:
-            if lab not in selected_labels:
-                selected.append(s)
-                selected_labels.add(lab)
+            if lab not in seen:
+                selected.append((lab, s))
+                seen.add(lab)
     if misses:
         raise ValueError(
             "No scenario labels matched these substring selectors: " + str(misses) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
         )
-    if not selected:
-        raise ValueError("No scenarios were selected.")
     return selected
 
 
-def build_parameter_table(selected_scenarios: list[dict], drop_constant_columns: bool) -> pd.DataFrame:
+def build_parameter_table(selected_scenarios: list[tuple[str, dict]], drop_constant_columns: bool, max_params: int | None) -> pd.DataFrame:
     rows = []
-    for idx, scenario in enumerate(selected_scenarios):
-        label = scenario_label(scenario, idx)
+    for label, scenario in selected_scenarios:
         params = effective_parameters_for_scenario(scenario)
         rows.append({"scenario": label, **params})
 
@@ -151,64 +156,55 @@ def build_parameter_table(selected_scenarios: list[dict], drop_constant_columns:
         if df.shape[1] == 0:
             raise ValueError("All selected parameters were constant across the chosen scenarios.")
 
-    return df.sort_index(axis=1)
+    df = df.reindex(sorted(df.columns), axis=1)
+    if max_params is not None:
+        df = df.iloc[:, :max_params]
+    return df
 
 
-def plot_heatmap(df: pd.DataFrame, outpath: Path, title: str, dpi: int) -> None:
-    data = df.to_numpy(dtype=float)
-    n_rows, n_cols = data.shape
-    fig_w = max(10, 0.55 * n_cols + 4)
-    fig_h = max(5.5, 0.45 * n_rows + 3)
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in out.columns:
+        vals = out[col].to_numpy(dtype=float)
+        lo = np.nanmin(vals)
+        hi = np.nanmax(vals)
+        if hi > lo:
+            out[col] = (vals - lo) / (hi - lo)
+        else:
+            out[col] = 1.0
+    return out
+
+
+def plot_grouped_bars(df_plot: pd.DataFrame, outpath: Path, title: str, ylabel: str, dpi: int) -> None:
+    scenarios = list(df_plot.index)
+    params = list(df_plot.columns)
+    n_scen = len(scenarios)
+    n_params = len(params)
+
+    x = np.arange(n_scen)
+    total_group_width = 0.86
+    bar_width = total_group_width / max(n_params, 1)
+    offsets = (np.arange(n_params) - (n_params - 1) / 2.0) * bar_width
+
+    fig_w = max(11, 1.3 * n_scen + 0.28 * n_params + 4)
+    fig_h = 7.2
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
-    im = ax.imshow(data, aspect="auto", cmap="viridis")
-    ax.set_xticks(np.arange(n_cols))
-    ax.set_xticklabels(df.columns, rotation=45, ha="right")
-    ax.set_yticks(np.arange(n_rows))
-    ax.set_yticklabels(df.index)
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Parameter value")
-    fig.savefig(outpath, dpi=dpi)
-    plt.close(fig)
 
+    cmap = plt.get_cmap("tab20")
+    colors = [cmap(i % 20) for i in range(n_params)]
 
-def plot_normalized_heatmap(df: pd.DataFrame, outpath: Path, title: str, dpi: int) -> None:
-    work = df.copy()
-    for col in work.columns:
-        vals = work[col].to_numpy(dtype=float)
-        mu = np.nanmean(vals)
-        sd = np.nanstd(vals)
-        work[col] = (vals - mu) / sd if sd > 0 else 0.0
-    data = work.to_numpy(dtype=float)
-    n_rows, n_cols = data.shape
-    fig_w = max(10, 0.55 * n_cols + 4)
-    fig_h = max(5.5, 0.45 * n_rows + 3)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
-    im = ax.imshow(data, aspect="auto", cmap="coolwarm", vmin=-2.5, vmax=2.5)
-    ax.set_xticks(np.arange(n_cols))
-    ax.set_xticklabels(work.columns, rotation=45, ha="right")
-    ax.set_yticks(np.arange(n_rows))
-    ax.set_yticklabels(work.index)
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Column-wise z-score")
-    fig.savefig(outpath, dpi=dpi)
-    plt.close(fig)
+    for j, param in enumerate(params):
+        heights = df_plot[param].to_numpy(dtype=float)
+        ax.bar(x + offsets[j], heights, width=bar_width * 0.95, label=param, color=colors[j], edgecolor="black", linewidth=0.3)
 
-
-def plot_lines(df: pd.DataFrame, outpath: Path, title: str, dpi: int) -> None:
-    fig_w = max(11, 0.55 * len(df.columns) + 4)
-    fig, ax = plt.subplots(figsize=(fig_w, 6.8), constrained_layout=True)
-    x = np.arange(len(df.columns))
-    for scenario in df.index:
-        ax.plot(x, df.loc[scenario].to_numpy(dtype=float), marker="o", linewidth=1.8, label=scenario)
     ax.set_xticks(x)
-    ax.set_xticklabels(df.columns, rotation=45, ha="right")
-    ax.set_ylabel("Parameter value")
+    ax.set_xticklabels(scenarios, rotation=25, ha="right")
+    ax.set_ylabel(ylabel)
     ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.grid(True, alpha=0.25)
-    ax.legend(frameon=True, fontsize=8, ncol=2)
-    fig.savefig(outpath, dpi=dpi)
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(title="Parameter", bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.0, frameon=True, fontsize=8)
+
+    fig.savefig(outpath, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -225,32 +221,28 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     selected_scenarios = select_scenarios(args.scenario_labels, args.exact_labels)
-    df = build_parameter_table(selected_scenarios, drop_constant_columns=args.drop_constant_columns)
+    df = build_parameter_table(selected_scenarios, args.drop_constant_columns, args.max_params)
+    df_plot = normalize_columns(df) if args.normalize_columns else df
 
     if args.scenario_labels:
         scenario_tag = "exact_labels" if args.exact_labels else "substring_labels"
     else:
         scenario_tag = "first9"
+    value_tag = "normalized" if args.normalize_columns else "raw"
     const_tag = "varying_only" if args.drop_constant_columns else "all_static"
 
-    csv_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}.csv"
-    heatmap_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_heatmap.png"
-    lines_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_lines.png"
+    csv_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_{value_tag}.csv"
+    barplot_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_{value_tag}_grouped_bars.png"
 
     df.to_csv(csv_path)
-    plot_heatmap(df, heatmap_path, title=f"Static simulation parameters ({scenario_tag}, {const_tag})", dpi=args.dpi)
-    plot_lines(df, lines_path, title=f"Static parameter profiles ({scenario_tag}, {const_tag})", dpi=args.dpi)
+    ylabel = "Normalized parameter value (0-1 within parameter)" if args.normalize_columns else "Parameter value"
+    title = f"Static simulation parameters by scenario ({scenario_tag}, {const_tag}, {value_tag})"
+    plot_grouped_bars(df_plot, barplot_path, title=title, ylabel=ylabel, dpi=args.dpi)
 
     print(f"Scenarios selected: {len(df.index)}")
     print(f"Parameters plotted: {len(df.columns)}")
     print(f"CSV: {csv_path}")
-    print(f"Heatmap: {heatmap_path}")
-    print(f"Line plot: {lines_path}")
-
-    if args.normalize:
-        norm_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}_heatmap_zscore.png"
-        plot_normalized_heatmap(df, norm_path, title=f"Static simulation parameters ({scenario_tag}, {const_tag}, z-score)", dpi=args.dpi)
-        print(f"Normalized heatmap: {norm_path}")
+    print(f"Grouped bar plot: {barplot_path}")
 
 
 if __name__ == "__main__":
