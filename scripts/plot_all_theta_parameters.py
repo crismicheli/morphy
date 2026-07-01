@@ -12,10 +12,10 @@ starting with 'theta' by default, and generates:
 3) A CSV table of the extracted values.
 
 Usage:
-python scripts/plot_all_theta_parameters_v2.py
-python scripts/plot_all_theta_parameters_v2.py --include-defaults
-python scripts/plot_all_theta_parameters_v2.py --include-defaults --normalize
-python scripts/plot_all_theta_parameters_v2.py --prefix=
+python scripts/plot_all_theta_parameters.py
+python scripts/plot_all_theta_parameters.py --include-defaults
+python scripts/plot_all_theta_parameters.py --include-defaults --normalize
+python scripts/plot_all_theta_parameters.py --prefix=
 
 The script is designed to be tolerant of mild variation in scenario structure.
 """
