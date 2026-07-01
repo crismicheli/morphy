@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# from classifiers.classifier_dispatch import get_classifier_callable
+from classifiers.classifier_dispatch import get_classifier_callable
 from classifiers.static_classifier import STATE_COLORS
 from config import DEFAULT_BOUNDS
 
