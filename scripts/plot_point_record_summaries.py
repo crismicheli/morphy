@@ -50,7 +50,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from classifiers.classifier_dispatch import get_classifier_callable
 from classifiers.static_classifier import STATE_COLORS
 from config import DEFAULT_BOUNDS
 
@@ -72,7 +71,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print-attractor-summary", action="store_true", help="Print the estimated attractor position in CETO coordinates and its signed minimum distances to the viability-box faces.")
     parser.add_argument("--sampling-mode", choices=["raw", "arclength"], default="raw", help="Use original time-sampled points or arc-length-rediscretized state-space samples.")
     parser.add_argument("--space-step", type=float, default=0.02, help="Target 4D CETO arc-length spacing when --sampling-mode arclength is used.")
-    parser.add_argument("--classifier-type", default=None, help="Classifier name used to relabel resampled points. If omitted, uses the CSV classifier_type column when present, otherwise 'static'.")
     parser.add_argument("--dpi", type=int, default=220, help="Output figure DPI.")
     return parser.parse_args()
 
@@ -99,14 +97,6 @@ def infer_title_stub(df: pd.DataFrame, csv_path: Path) -> str:
     scenario = df["scenario_label"].iloc[0] if "scenario_label" in df.columns and not df.empty else csv_path.stem
     classifier = df["classifier_type"].iloc[0] if "classifier_type" in df.columns and not df.empty else "classifier"
     return f"{scenario} | {classifier}"
-
-
-def infer_classifier_type(df: pd.DataFrame, cli_value: str | None) -> str:
-    if cli_value:
-        return cli_value
-    if "classifier_type" in df.columns and not df["classifier_type"].dropna().empty:
-        return str(df["classifier_type"].dropna().iloc[0])
-    return "static"
 
 
 def split_survival_sets(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -186,25 +176,26 @@ def estimate_attractor_from_retained_points(df: pd.DataFrame) -> dict:
     }
 
 
-def summarize_sets(raw_df: pd.DataFrame, surviving_df: pd.DataFrame) -> dict:
+def summarize_sets(raw_df: pd.DataFrame, plotted_df: pd.DataFrame, surviving_df: pd.DataFrame) -> dict:
     return {
         "total_trajectories": int(raw_df["trajectory_id"].nunique()),
         "surviving_trajectories": int(surviving_df["trajectory_id"].nunique()),
         "total_points": int(len(raw_df)),
         "surviving_points": int(len(surviving_df)),
-        "max_distance_surviving": float(surviving_df["distance_from_attractor_4d"].max()),
+        "plotted_points": int(len(plotted_df)),
+        "max_distance_plotted": float(plotted_df["distance_from_attractor_4d"].max()),
     }
 
 
 def summary_text(summary: dict) -> str:
     return (
         f"Traj: total={summary['total_trajectories']}, surviving={summary['surviving_trajectories']} | "
-        f"Points: total={summary['total_points']}, surviving={summary['surviving_points']} | "
-        f"Max surviving dist={summary['max_distance_surviving']:.3g}"
+        f"Points: total={summary['total_points']}, surviving={summary['surviving_points']}, plotted={summary['plotted_points']} | "
+        f"Max plotted dist={summary['max_distance_plotted']:.3g}"
     )
 
 
-def resample_trajectory_arclength(group: pd.DataFrame, *, space_step: float, attractor: np.ndarray, classifier_name: str) -> pd.DataFrame:
+def resample_trajectory_arclength(group: pd.DataFrame, *, space_step: float, attractor: np.ndarray) -> pd.DataFrame:
     g = group.sort_values("timestamp") if "timestamp" in group.columns and group["timestamp"].notna().any() else group.copy()
     xyz = g[STATE_COLS].to_numpy(dtype=float)
     if len(xyz) == 0:
@@ -225,7 +216,7 @@ def resample_trajectory_arclength(group: pd.DataFrame, *, space_step: float, att
         return out
 
     targets = np.arange(0.0, total + 0.5 * space_step, space_step)
-    if targets[-1] < total:
+    if len(targets) == 0 or targets[-1] < total:
         targets = np.append(targets, total)
 
     coords = {}
@@ -239,25 +230,26 @@ def resample_trajectory_arclength(group: pd.DataFrame, *, space_step: float, att
     if "scenario_label" in g.columns:
         out["scenario_label"] = g["scenario_label"].iloc[0]
     if "classifier_type" in g.columns:
-        out["classifier_type"] = classifier_name
+        out["classifier_type"] = g["classifier_type"].iloc[0]
+
+    nearest_idx = np.searchsorted(s, targets, side="left")
+    nearest_idx = np.clip(nearest_idx, 0, len(s) - 1)
+    prev_idx = np.clip(nearest_idx - 1, 0, len(s) - 1)
+    choose_prev = np.abs(targets - s[prev_idx]) <= np.abs(s[nearest_idx] - targets)
+    nearest_idx = np.where(choose_prev, prev_idx, nearest_idx)
+    orig_labels = g["phenotypical_label"].astype(str).to_numpy()
+    out["phenotypical_label"] = orig_labels[nearest_idx]
+
     out["distance_from_attractor_4d"] = np.linalg.norm(out[STATE_COLS].to_numpy(dtype=float) - attractor, axis=1)
     out["signed_box_distance"] = np.array([signed_distance_to_viability_box_row(v, DEFAULT_BOUNDS) for v in out[STATE_COLS].to_numpy(dtype=float)], dtype=float)
     out["viability_label"] = np.where(out["signed_box_distance"] >= 0.0, "viable", "non_viable")
-
-    classifier = get_classifier_callable(classifier_name)
-    phenos = []
-    for _, row in out.iterrows():
-        state = row[STATE_COLS].to_numpy(dtype=float)
-        try:
-            label = classifier(state, {}) if classifier_name != "static" else classifier(state)
-        except TypeError:
-            label = classifier(state)
-        phenos.append(str(label))
-    out["phenotypical_label"] = phenos
+    if "timestamp" in g.columns and g["timestamp"].notna().any():
+        t = g["timestamp"].to_numpy(dtype=float)
+        out["timestamp"] = np.interp(targets, s, t)
     return out
 
 
-def maybe_spatially_resample(df: pd.DataFrame, *, sampling_mode: str, space_step: float, classifier_name: str) -> pd.DataFrame:
+def maybe_spatially_resample(df: pd.DataFrame, *, sampling_mode: str, space_step: float) -> pd.DataFrame:
     if sampling_mode == "raw":
         return df.copy()
     if space_step <= 0:
@@ -266,7 +258,7 @@ def maybe_spatially_resample(df: pd.DataFrame, *, sampling_mode: str, space_step
     attractor = np.array([attractor_info["C"], attractor_info["T"], attractor_info["E"], attractor_info["O"]], dtype=float)
     pieces = []
     for _, group in df.groupby("trajectory_id"):
-        pieces.append(resample_trajectory_arclength(group, space_step=space_step, attractor=attractor, classifier_name=classifier_name))
+        pieces.append(resample_trajectory_arclength(group, space_step=space_step, attractor=attractor))
     out = pd.concat(pieces, ignore_index=True)
     out = out[out["viability_label"].astype(str) == "viable"].copy()
     if out.empty:
@@ -345,7 +337,7 @@ def plot_phenotype_distance_histogram(df: pd.DataFrame, output_path: Path, *, ph
         ylabel = "Phenotype composition [% within distance bin]"
     else:
         plot_counts = counts
-        ylabel = "Number of surviving points"
+        ylabel = "Number of surviving/plotted points"
     for idx, label in enumerate(labels):
         color = STATE_COLORS.get(label, FALLBACK_COLOR)
         ax.bar(centers, plot_counts[idx, :], width=widths, bottom=bottoms, color=color, edgecolor="white", linewidth=0.5, align="center", label=label)
@@ -377,10 +369,10 @@ def build_cumulative_viable_curve(df: pd.DataFrame, n_bins: int) -> tuple[np.nda
 def plot_cumulative_viable_distance(df: pd.DataFrame, output_path: Path, *, cumulative_distance_bins: int, summary: dict, title_stub: str, sampling_mode: str, dpi: int) -> None:
     x, y, n = build_cumulative_viable_curve(df, n_bins=cumulative_distance_bins)
     fig, ax = plt.subplots(figsize=(10.4, 6.2), constrained_layout=True)
-    ax.step(x, y, where="post", color=CUMULATIVE_COLOR, linewidth=2.4, label=f"Cumulative % of surviving viable points (N={n})")
+    ax.step(x, y, where="post", color=CUMULATIVE_COLOR, linewidth=2.4, label=f"Cumulative % of surviving/plotted viable points (N={n})")
     ax.set_title(f"Cumulative surviving viable points versus 4D distance from attractor\n{title_stub} | sampling={sampling_mode}\n{summary_text(summary)}", fontsize=13, fontweight="bold")
     ax.set_xlabel("4D distance from attractor")
-    ax.set_ylabel("Cumulative [% of surviving viable points]")
+    ax.set_ylabel("Cumulative [% of surviving/plotted viable points]")
     ax.yaxis.set_major_formatter(PercentFormatter(xmax=100.0))
     ax.set_ylim(0, 100)
     ax.grid(True, alpha=0.25)
@@ -398,9 +390,8 @@ def main() -> None:
 
     raw_df = load_point_records(csv_path)
     surviving_df, _dropped_df = split_survival_sets(raw_df)
-    classifier_name = infer_classifier_type(raw_df, args.classifier_type)
-    sampled_df = maybe_spatially_resample(surviving_df, sampling_mode=args.sampling_mode, space_step=args.space_step, classifier_name=classifier_name)
-    sampled_df = attach_signed_box_distance(sampled_df, DEFAULT_BOUNDS)
+    plotted_df = maybe_spatially_resample(surviving_df, sampling_mode=args.sampling_mode, space_step=args.space_step)
+    plotted_df = attach_signed_box_distance(plotted_df, DEFAULT_BOUNDS)
 
     if args.output_dir is None:
         output_dir = csv_path.parent / "figures"
@@ -410,8 +401,8 @@ def main() -> None:
             output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    title_stub = infer_title_stub(sampled_df, csv_path)
-    summary = summarize_sets(raw_df, sampled_df)
+    title_stub = infer_title_stub(plotted_df, csv_path)
+    summary = summarize_sets(raw_df, plotted_df, surviving_df)
 
     stem = csv_path.stem
     suffix = args.sampling_mode if args.sampling_mode == "raw" else f"{args.sampling_mode}_step_{args.space_step:g}"
@@ -419,7 +410,7 @@ def main() -> None:
     cumulative_png = output_dir / f"{stem}_viable_distance_cumulative_percent_{suffix}.png"
 
     plot_phenotype_distance_histogram(
-        sampled_df,
+        plotted_df,
         phenotype_png,
         phenotype_distance_bins=args.phenotype_distance_bins,
         phenotype_distance_mode=args.phenotype_distance_mode,
@@ -430,7 +421,7 @@ def main() -> None:
         dpi=args.dpi,
     )
     plot_cumulative_viable_distance(
-        sampled_df,
+        plotted_df,
         cumulative_png,
         cumulative_distance_bins=args.cumulative_distance_bins,
         summary=summary,
@@ -442,13 +433,14 @@ def main() -> None:
     print(f"Sampling mode: {args.sampling_mode}")
     if args.sampling_mode == "arclength":
         print(f"Space step: {args.space_step}")
-    print(f"Total trajectories: {int(raw_df['trajectory_id'].nunique())}")
-    print(f"Surviving trajectories: {int(surviving_df['trajectory_id'].nunique())}")
-    print(f"Total points: {len(raw_df)}")
-    print(f"Points used in plots: {len(sampled_df)}")
-    print(f"Max plotted distance from attractor: {float(sampled_df['distance_from_attractor_4d'].max())}")
+    print(f"Total trajectories: {summary['total_trajectories']}")
+    print(f"Surviving trajectories: {summary['surviving_trajectories']}")
+    print(f"Total points: {summary['total_points']}")
+    print(f"Surviving points: {summary['surviving_points']}")
+    print(f"Plotted points: {summary['plotted_points']}")
+    print(f"Max plotted distance from attractor: {summary['max_distance_plotted']}")
     if args.print_attractor_summary:
-        attractor = estimate_attractor_from_retained_points(sampled_df)
+        attractor = estimate_attractor_from_retained_points(plotted_df)
         print("Estimated attractor CETO position (from median terminal plotted points):")
         print(f"  C={attractor['C']:.6g}, T={attractor['T']:.6g}, E={attractor['E']:.6g}, O={attractor['O']:.6g}")
         print("Signed distances to viability-box faces:")
