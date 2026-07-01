@@ -1,18 +1,19 @@
 
 #!/usr/bin/env python3
 """
-Plot all static simulation parameters used by the configured scenarios.
+Plot all static simulation parameters used by selected scenarios.
 
 Interpretation
 --------------
-Here, "static parameters" means the effective parameter set used to simulate
-each scenario: start from DEFAULT_PARAMS, then overwrite with each scenario's
+"Static parameters" means the effective parameter set used to simulate each
+scenario: start from DEFAULT_PARAMS, then overwrite with each scenario's
 param_overrides. The resulting table therefore represents the actual parameter
 values used in each simulation.
 
-By default, this script targets the first 9 scenarios in SCENARIOS, which is
-aligned with the common 9-scenario analysis workflow. You can also choose a
-custom subset of scenario labels.
+This version is more robust about scenario selection:
+- By default, it uses the first 9 scenarios in SCENARIOS.
+- It can print all available scenario labels.
+- It supports exact label matching or substring-based matching.
 
 Outputs
 -------
@@ -23,10 +24,11 @@ Outputs
 
 Typical usage
 -------------
+python scripts/plot_all_static_parameters_for_9_scenarios.py --list-scenarios
 python scripts/plot_all_static_parameters_for_9_scenarios.py
-python scripts/plot_all_static_parameters_for_9_scenarios.py --normalize
-python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity" "Intermediate porosity" "Low porosity"
-python scripts/plot_all_static_parameters_for_9_scenarios.py --drop-constant-columns
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-labels "High porosity (baseline)"
+python scripts/plot_all_static_parameters_for_9_scenarios.py --scenario-contains porosity
+python scripts/plot_all_static_parameters_for_9_scenarios.py --drop-constant-columns --normalize
 """
 from __future__ import annotations
 
@@ -48,7 +50,9 @@ from config import DEFAULT_PARAMS, SCENARIOS
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot all static simulation parameters across scenarios.")
     parser.add_argument("--output-dir", default="output/static_parameter_plots", help="Directory for output files.")
-    parser.add_argument("--scenario-labels", nargs="*", default=None, help="Optional exact scenario labels to include. If omitted, the first 9 scenarios are used.")
+    parser.add_argument("--scenario-labels", nargs="*", default=None, help="Optional exact scenario labels to include.")
+    parser.add_argument("--scenario-contains", nargs="*", default=None, help="Optional substrings used to match scenario labels case-insensitively.")
+    parser.add_argument("--list-scenarios", action="store_true", help="Print all available scenario labels and exit.")
     parser.add_argument("--drop-constant-columns", action="store_true", help="Drop parameters that have the same value in every selected scenario.")
     parser.add_argument("--normalize", action="store_true", help="Also save a normalized heatmap using column-wise z-scores when possible.")
     parser.add_argument("--dpi", type=int, default=220, help="Figure DPI.")
@@ -76,19 +80,49 @@ def effective_parameters_for_scenario(scenario: dict) -> dict:
     return params
 
 
-def select_scenarios(scenario_labels: list[str] | None) -> list[dict]:
-    scenarios = list(SCENARIOS)
+def available_scenarios() -> list[tuple[str, dict]]:
+    out = []
+    for i, s in enumerate(SCENARIOS):
+        out.append((scenario_label(s, i), s))
+    return out
+
+
+def print_available_scenarios() -> None:
+    for i, (lab, _s) in enumerate(available_scenarios(), start=1):
+        print(f"{i:02d}. {lab}")
+
+
+def select_scenarios(scenario_labels: list[str] | None, scenario_contains: list[str] | None) -> list[dict]:
+    labeled = available_scenarios()
+
+    if scenario_labels and scenario_contains:
+        raise ValueError("Use either --scenario-labels or --scenario-contains, not both.")
+
     if scenario_labels:
-        wanted = list(scenario_labels)
-        selected = []
-        available = {scenario_label(s, i): s for i, s in enumerate(scenarios)}
-        missing = [lab for lab in wanted if lab not in available]
+        available = {lab: s for lab, s in labeled}
+        missing = [lab for lab in scenario_labels if lab not in available]
         if missing:
-            raise ValueError(f"Unknown scenario labels: {missing}")
-        for lab in wanted:
-            selected.append(available[lab])
+            all_labels = [lab for lab, _ in labeled]
+            raise ValueError(
+                "Unknown scenario labels: " + str(missing) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
+            )
+        return [available[lab] for lab in scenario_labels]
+
+    if scenario_contains:
+        needles = [x.lower() for x in scenario_contains]
+        selected = []
+        for lab, s in labeled:
+            low = lab.lower()
+            if any(needle in low for needle in needles):
+                selected.append(s)
+        if not selected:
+            all_labels = [lab for lab, _ in labeled]
+            raise ValueError(
+                "No scenario labels matched the requested substrings: " + str(scenario_contains) + "\nAvailable labels are:\n- " + "\n- ".join(all_labels)
+            )
         return selected
-    return scenarios[:9]
+
+    return [s for _, s in labeled[:9]]
 
 
 def build_parameter_table(selected_scenarios: list[dict], drop_constant_columns: bool) -> pd.DataFrame:
@@ -176,15 +210,25 @@ def plot_lines(df: pd.DataFrame, outpath: Path, title: str, dpi: int) -> None:
 
 def main() -> None:
     args = parse_args()
+
+    if args.list_scenarios:
+        print_available_scenarios()
+        return
+
     output_dir = Path(args.output_dir)
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    selected_scenarios = select_scenarios(args.scenario_labels)
+    selected_scenarios = select_scenarios(args.scenario_labels, args.scenario_contains)
     df = build_parameter_table(selected_scenarios, drop_constant_columns=args.drop_constant_columns)
 
-    scenario_tag = "custom" if args.scenario_labels else "first9"
+    if args.scenario_labels:
+        scenario_tag = "exact_labels"
+    elif args.scenario_contains:
+        scenario_tag = "contains_match"
+    else:
+        scenario_tag = "first9"
     const_tag = "varying_only" if args.drop_constant_columns else "all_static"
 
     csv_path = output_dir / f"static_parameters_{scenario_tag}_{const_tag}.csv"
